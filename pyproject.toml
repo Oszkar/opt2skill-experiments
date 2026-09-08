@@ -1,0 +1,20 @@
+[project]
+name = "o2s"
+version = "0.1.0"
+description = "Opt2Skill G1 squat proof-of-concept"
+requires-python = ">=3.12,<3.13"
+dependencies = ["numpy>=2.0", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+trajopt = ["crocoddyl==3.2.1", "pin==4.0.0", "mujoco>=3.12", "matplotlib>=3.8"]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["o2s*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -232,7 +232,7 @@ stress test (see spec); repo initialised 2026-09-02.
 - **Opt2Skill** (2024-25): full-order humanoid, loco-manipulation, hardware, Pos/Pos+F/Pos+T ablation.
 
 ### Trade-offs of our choices
-- Crocoddyl (WSL2): hard torque limits + contact forces in reference; Linux-only; Pinocchio rigid-contact model vs MuJoCo soft-contact model gap (RL closes it, same as in the paper).
+- Crocoddyl: hard optimizer torque limits + contact forces in the reference; verified here under WSL2. Pinned Python 3.12 packages also have macOS wheels, but this project has not been tested there. Pinocchio rigid contacts differ from MuJoCo soft contacts; feedback may accommodate some mismatch, but RL does not automatically close that gap.
 - Playground + brax PPO: paper's stack, throughput; JAX compile cycles.
 - Squat: one contact phase; walking later needs impacts + schedule.
 - Offset-from-default actions, torque only in obs/reward: clean ablation; leaves feedforward-torque designs (OPT-Mimic line) as a follow-up.
@@ -283,3 +283,180 @@ tracking environment; no policy-training implementation or `rl` extra exists yet
   (`depth=(0.10, 0.30)`, `t_down`/`t_up=(0.8, 1.5)`, `t_hold=(0.2, 0.6)`,
   `com_shift_x=(-0.03, 0.03)`) were tuned against real solves (6.1's sweeps) -- do not revert to
   earlier planning numbers when regenerating or extending the dataset.
+
+
+---
+
+## 9. From optimized motion to feedback control: study notes
+
+These explanations summarize the implementation walkthrough. They distinguish
+what the code does today from possible extensions; proposed policy interfaces,
+MPC, and general task primitives are not implemented.
+
+### 9.1 What each command establishes
+
+| Command | What happens | What a pass means |
+|---|---|---|
+| `python -m o2s.models.reconcile` | Loads both robot models and compares properties after configured overrides | The models agree on the checked structure, mass properties, and geometry |
+| `python -m o2s.trajopt.solve_one` | Optimizes states and torques, filters feasibility, and exports a reference | The candidate satisfies this optimizer's post-solve checks |
+| `python -m o2s.reference.view FILE --mode kinematic --loop` | Sets each saved state directly, like animation | Visual inspection only; no proof that physics can execute it |
+| `python -m o2s.reference.view FILE --mode replay --loop` | Simulates reference torque plus fixed PD feedback | A visual demonstration of this controller tracking the reference |
+| `python -m o2s.reference.validate FILE` | Computes inverse dynamics and runs two headless physics rollouts | Quantifies model consistency and configured-controller tracking |
+
+Reconciliation is a prerequisite, not trajectory validation. `joint_names` checks
+all 29 names and their order. `joint_limits` checks angle bounds. Total and per-link
+mass, link CoM offsets, and principal inertia values check mass properties.
+Forward kinematics compares selected frame positions in 20 reproducible random
+poses; it is not a full pose/velocity comparison. Principal moments alone do not
+verify the complete oriented inertia tensor. Foot geometry checks the collision
+boxes against configured sole offsets and dimensions. Transmission checks verify
+one actuator per joint with unit simulated gearing (not the physical gearbox).
+The actuator-type check verifies the gain/bias relationship expected by the
+position servos. A pass describes the loaded models after corrections, including
+the right-hip range override, rather than identical upstream files.
+
+`validate` uses real MuJoCo in the Python process without a window. Its inverse-
+dynamics check evaluates snapshots without integrating time. Each of its two
+replays resets the initial state and advances 1,700 physics steps for a default
+170-interval squat: ten 2 ms steps per 20 ms interval. Unlike kinematic playback,
+replay does not overwrite the state with the reference after every step. The
+headless run has no real-time pacing, so several seconds of simulation can finish
+in much less wall-clock time. Feedforward is applied through external generalized
+forces and bypasses actuator clipping; reported effort uses interval means.
+
+### 9.2 Initial condition, initial guess, and the search space
+
+The initial condition is fixed: the MJCF `home` pose, converted to Pinocchio
+coordinates, with the base lifted so the lowest sole frame is at ground height,
+and all base and joint velocities zero. This implementation cannot solve from
+an arbitrary starting pose or recover an arbitrary falling state.
+
+The initial *guess for the trajectory* is a different thing: repeat that standing
+state at every node and initialize controls with quasi-static torques. The guess
+contains no squat. The target CoM path supplies the task: 0.5 s standing, 1 s
+smooth descent, 0.4 s hold, 1 s ascent, 0.5 s standing by default. Depth, descent,
+hold, ascent, and fore-aft shift are CLI parameters; standing durations are also
+parameters in the Python API. Joint-angle trajectories are not prescribed.
+
+Each stored state has 71 values: base position (3), quaternion (4), joint angles
+(29), base linear/angular velocity (6), and joint velocities (29). The independent
+state/tangent dimension is 70 because a quaternion represents three rotational
+degrees of freedom. For a default squat the solution has 171 states and 170
+29-dimensional torque vectors. The base has no direct actuator. Contact forces
+follow from the constrained dynamics rather than independent free controls.
+
+BoxFDDP uses derivatives and structured backward/forward passes to improve a
+continuous trajectory; it does not enumerate combinations of joint angles. Fixed
+contacts, a nearby standing guess, a smooth target, and posture regularization
+make the shallow squat relatively easy. Convergence is local, not a guarantee of
+global optimality or success for another task. The initial state is fixed; return
+to standing is encouraged by costs and checked afterward, not an exact fixed
+terminal state. Torque bounds are hard solver bounds on raw control; some other
+requirements are penalties plus export filters.
+
+### 9.3 Reading the shallow-squat experiment
+
+User-reported 15 cm run: three iterations, 0.33 s solver time, 170 intervals.
+Cost 4011.555 is a weighted objective, not a physical error or universal score.
+The minimum achieved CoM height was within 0.3 mm of the requested drop; this is
+whole-body CoM depth, not necessarily the pelvis drop. Raw optimizer torque used
+at most 22.08% of configured effort limits, before export adds damping.
+
+The joint-limit margin was 0.0415 rad (about 2.38 degrees); minimum normal force
+was 149.3 N per foot over the sampled horizon. Friction utilization 0.0091 means
+0.91% of modeled friction capacity. CoP margin violation -0.0248 m means 24.8 mm
+of clearance inside the already-inset permitted boundary; positive would mean a
+violation. Foot drift was 1.2 mm. Printed zero residuals mean rounding, not exact
+mathematical zero.
+
+Feedforward replay had maximum pelvis error 7.7 mm, joint error 0.0043 rad RMS,
+and leg feedback RMS 0.6406 N m versus reference RMS 8.1619 N m (7.85%). The
+waist ratio was 54.12%, but absolute correction was only 0.2712 N m: inspect
+absolute values alongside ratios. The interval-mean effort ratio peaked at
+25.43%, which is not an instantaneous torque-limit guarantee.
+
+PD-only replay fell despite relatively small joint-angle error: the floating
+robot can tip while its internal joint configuration stays near the target.
+Negative pelvis height after falling reflects this foot-only collision scene;
+the torso need not stop at the floor. This is evidence about the configured
+controller, not universal failure of PD or a learned-policy ablation.
+
+### 9.4 IK, task primitives, and motion libraries
+
+Traditional inverse kinematics finds a configuration that achieves a geometric
+target, potentially with joint limits, posture preferences, and collision checks.
+Trajectory optimization finds timed states and controls under dynamics and
+contacts. A sequence of IK poses does not establish feasible accelerations,
+torques, or balance. IK can nevertheless provide useful poses or initial guesses
+for the trajectory optimizer.
+
+A reusable task vocabulary would include:
+
+| Primitive | Purpose | Example |
+|---|---|---|
+| State or pose | Initial state, seed, or posture preference | Standing with zero velocity |
+| Frame/CoM target | Desired position, orientation, or CoM behavior | Palm relative to a mug; CoM over support foot |
+| Contact | Active robot/surface relationship and force limits | Sole planted; hand holding object |
+| Phase | Duration, targets, and active contacts | Reach, hold, lift |
+| Constraint | Requirement enforced explicitly | Torque limits, collision avoidance |
+| Cost | Preference traded against other objectives | Smoothness, low effort, posture |
+| Transition | Change between phases | Liftoff, touchdown, grasp attachment |
+
+A standing reach is a useful next extension: retain two-foot contact and add a
+palm target while balancing/posture costs guide the rest of the body. A terminal
+hand target leaves more freedom than a full hand path. Walking introduces contact
+phases and touchdown dynamics. Pickup additionally needs object dynamics and
+grasp constraints. Object-relative targets make tasks reusable when objects move.
+A predefined contact schedule still does not discover which foot to move or where
+to land; contact-strategy search is an additional planning problem.
+
+Pose libraries can initialize poses; motion libraries can supply paths and warm
+starts; task libraries can supply parameterized phase sequences. Human or other-
+robot motions need retargeting and dynamic validation. A library of our own
+successful optimized trajectories can seed nearby problems. Valid clips cannot
+simply be concatenated: position/velocity continuity, contacts, collisions, and
+actuator feasibility must also hold across transitions. No external pose or task
+library has been selected for this codebase.
+
+### 9.5 References in training, evaluation, and execution
+
+A proposed tracking policy consumes current observations and reference information
+and produces joint-position offsets from the default pose; PD actuators turn those
+targets into torque. This differs from today's controller, which directly injects
+reference torque as feedforward. Torque references can instead enter policy/critic
+observations and rewards; these interventions should be distinguished experimentally.
+
+Use optimized trajectories in **both training and evaluation**, with separate
+sets. Training episodes sample a reference and reward tracking under physics,
+optionally with sampled start nodes, perturbed states, and domain randomization.
+The 70/10/20 split supports training, settings selection on validation data, and
+final held-out testing. Freeze the policy for evaluation and separately measure
+nominal tracking, unseen trajectory parameters, disturbances, and model changes.
+Robustness must be trained and measured; it does not follow from using a network.
+A reference-conditioned policy generally still receives the reference at runtime.
+`reference.validate` evaluates references and a fixed controller, not learned policies.
+
+### 9.6 Why learn a policy instead of optimizing online?
+
+Online replanning is a legitimate alternative: model predictive control repeatedly
+solves from the current estimated state, executes a short portion, and solves
+again. A saved plan alone cannot react to a push; PD, trajectory-local feedback,
+MPC, or a learned policy supplies that feedback in different ways. Crocoddyl's
+local feedback gains are another possible baseline; we do not export/use them yet.
+
+A trained policy moves substantial computation offline and offers a predictable,
+cheap runtime evaluation. Training across relevant variations can teach coordinated
+corrections, but behavior outside that distribution remains uncertain. MPC can
+explicitly handle new targets and constraints, yet depends on model/state accuracy
+and meeting solve deadlines. Robust optimization is also possible; uncertainty
+handling is not exclusive to learning.
+
+The observed 0.33 s offline solve spans about 16.5 of our 20 ms control intervals.
+That is not an MPC benchmark: MPC may use a shorter horizon, the previous solution
+as a warm start, and limited iterations. Nor is fast replanning from any viable
+pose established by our fixed-standing solver. A pose can be geometrically valid
+while its velocity/contact state makes recovery impossible.
+
+The useful experiment is therefore whether a learned tracker improves tracking,
+recovery, and runtime cost relative to practical feedback baselines. RL is an
+approach to evaluate, not a necessary consequence of having optimized references.

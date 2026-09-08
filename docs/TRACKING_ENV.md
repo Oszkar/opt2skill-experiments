@@ -41,6 +41,39 @@ not imply stable balance: the controller may simply fail to request the right
 joint torques. These measurements describe the scripted controllers, not reference
 feasibility or the potential performance of a future policy.
 
+## Compare the validation controller
+
+Both stabilized modes use 4x position stiffness, ankle pitch stiffness of
+400 N m/rad, unchanged velocity damping gains, and target `q_ref[k+1]` during
+interval k. Only `stabilized-ff` adds `tau_ref[k]` as feedforward. This isolates
+what the optimized torque contributes. These names describe controller presets;
+"stabilized" does not guarantee a successful episode.
+
+```bash
+python -m o2s.tracking.inspect data/refs/learning/shallow.npz --controller stabilized-pd --out runs/shallow_pd_01
+python -m o2s.tracking.inspect data/refs/learning/shallow.npz --controller stabilized-ff --out runs/shallow_ff_01
+```
+
+Add `--view` to either command to watch the actual simulation at real time with
+reference keypoint markers and live terminal readouts of time, pelvis error,
+effort and reward. The same trace and plots are saved after the run. The viewer
+closes at episode end; closing it early saves a partial run as `viewer_closed`.
+A graphical desktop is required (WSLg on WSL2); on macOS use `mjpython` instead of
+`python` for `--view`. The six-panel PNG is an after-run plot, not a live dashboard.
+
+On the saved 15 cm shallow squat, stabilized PD fell at 2.22 s (maximum pelvis
+position error 0.5575 m, peak effort ratio 0.4497). With feedforward it completed
+all 3.40 s (maximum pelvis error 0.00769 m, peak effort ratio 0.3155). Neither run
+saturated the PD actuators or exceeded total effort limits. The PD trace ends at
+the fall; validation continues over the full reference, so its post-fall metrics
+are not directly comparable. Tests compare both controllers' states and substep
+torques with validation over the intervals they share.
+
+The knee torque panel separates PD actuator torque, applied feedforward, total
+drive torque, and optimized reference torque. In the successful run, feedforward
+supplies most of the planned load while PD corrects tracking errors. This is a
+validated replay baseline, not a learned policy.
+
 ## The interface
 
 ```python
@@ -68,10 +101,12 @@ control ranges. Position actuators then enforce configured torque limits.
 `previous_action` records the actually applied target offset after clipping.
 Requested offsets, requested targets, applied targets, and clipping flags are all
 logged separately. A later policy adapter can introduce normalized action scaling
-explicitly. No torque or force reference enters the current actuator path.
+explicitly. By default no torque reference enters the actuator path. The diagnostic
+`step(action, feedforward=...)` keyword adds an explicit 29-joint torque vector
+through external generalized forces; it does not change actor observations.
 
 **Timing:** observation/reference k leads to action k and ten 2 ms physics steps.
-The returned observation and motion rewards use state/reference k+1. Mean actuator
+The returned observation and motion rewards use state/reference k+1. Mean total drive
 torque over the interval is compared with reference `tau[k]` for diagnostics only.
 Substep timestamps are **start times**: torque and contact solver outputs correspond
 to that substep, whereas returned states correspond to the interval end. Kinematics
@@ -124,7 +159,13 @@ base tips, so a high joint-position reward alone is misleading.
 `substep_torque` is actual generalized actuator torque after clipping, excluding
 passive damping, gravity, and contact forces. The code checks the ordered, stateless,
 gear-1 actuator assumptions and Euler integration needed for this measurement.
-`peak_effort_ratio` is the maximum actual torque/limit across joints and substeps.
+`feedforward_torque` records the applied external torque for each interval;
+`substep_total_torque` is actuator plus feedforward torque, and `mean_total_torque`
+is its interval mean. `peak_effort_ratio` uses **total drive torque at every physics
+substep**. `effort_ok` reports whether those totals respect limits (1e-6 tolerance).
+External feedforward bypasses actuator clipping: a violation is recorded, not
+silently clipped or used to terminate an inspection. Use `reference.validate` for
+reference acceptance, including the separate exported-torque check.
 `saturated_fraction` is the fraction of joint/substep samples where requested and
 actual servo torque differ by more than 1e-6 N m. It is separate from target clipping.
 

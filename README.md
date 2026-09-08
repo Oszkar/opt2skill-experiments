@@ -126,6 +126,10 @@ See the [tracking environment guide](docs/TRACKING_ENV.md) for action/observatio
 conventions, reward components, and how to inspect the trace. No RL framework is
 required and no policy is trained yet.
 
+Use `--controller stabilized-pd` or `--controller stabilized-ff` for matched
+validation-controller comparisons. Add `--view` to watch MuJoCo with live terminal
+metrics; see [the comparison guide](docs/TRACKING_ENV.md#compare-the-validation-controller).
+
 ## Generate a dataset
 
 ```bash

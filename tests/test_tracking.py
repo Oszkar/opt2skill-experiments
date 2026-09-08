@@ -155,3 +155,47 @@ def test_cli_refuses_existing_run_before_loading(tmp_path, monkeypatch):
         inspect.main()
     assert exc.value.code == 2
     assert marker.read_text() == "preserve"
+
+
+@pytest.mark.parametrize("controller", ["stabilized-pd", "stabilized-ff"])
+def test_stabilized_controller_matches_validator(env, controller):
+    from o2s.reference.validate import check_replay, replay_gains, set_state, step_interval
+    gain = env.model.actuator_gainprm.copy()
+    initial, records = run_episode(env, controller)
+    np.testing.assert_array_equal(env.model.actuator_gainprm, gain)
+    ff_enabled = controller == "stabilized-ff"
+    data = mujoco.MjData(env.model)
+    set_state(env.model, data, env.ref["qpos"][0], env.ref["qvel"][0])
+    with replay_gains(env.model, 4., 400.):
+        np.testing.assert_array_equal(initial["kp"], env.model.actuator_gainprm[:, 0])
+        for k, record in enumerate(records):
+            ff = env.ref["tau"][k] if ff_enabled else np.zeros(29)
+            total = np.empty((env.substeps, 29))
+            step_interval(env.model, data, ff, env.ref["qpos"][k + 1, 7:], substep_torques=total)
+            np.testing.assert_allclose(record["qpos"], data.qpos, atol=1e-7)
+            np.testing.assert_allclose(record["substep_total_torque"], total, atol=1e-5)
+            np.testing.assert_allclose(record["substep_total_torque"], record["substep_torque"] + ff)
+    if ff_enabled:
+        report = check_replay(env.model, env.ref, env.cfg)
+        assert report.ok and records[-1]["reason"] == "reference_end"
+        assert max(r["peak_effort_ratio"] for r in records) == pytest.approx(report.metrics["peak_effort_ratio"], abs=1e-6)
+    else:
+        assert records[-1]["reason"] == "fall"
+
+
+def test_external_feedforward_limit_is_observed_not_hidden(env):
+    obs, _ = env.reset()
+    _, _, _, _, info = env.step(obs["reference_joint_position"], feedforward=env.effort_limits * 3)
+    assert not info["effort_ok"]
+    assert info["peak_effort_ratio"] > 1
+    env.reset()
+    _, _, _, _, info = env.step(obs["reference_joint_position"])
+    np.testing.assert_array_equal(info["feedforward_torque"], np.zeros(29))
+
+
+@pytest.mark.parametrize("ff", [np.zeros(28), np.full(29, np.nan)])
+def test_invalid_feedforward_does_not_advance(env, ff):
+    obs, _ = env.reset()
+    with pytest.raises(ValueError, match="feedforward"):
+        env.step(obs["reference_joint_position"], feedforward=ff)
+    assert env.data.time == 0 and env.index == 0

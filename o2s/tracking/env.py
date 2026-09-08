@@ -2,7 +2,8 @@
 
 Actions are 29 joint-position offsets in radians from home. They are clipped to
 joint/control ranges before being sent through the model's position actuators.
-No reference torque or external feedforward is applied. Observations contain
+By default no external feedforward is applied. An explicit diagnostic-only
+feedforward keyword enables comparison with reference validation. Observations contain
 proprioception and current motion references; privileged state, reference torques,
 contact forces and reward diagnostics live in info only.
 """
@@ -117,12 +118,15 @@ class TrackingEnv:
                     normal[side] += force[0]
         return counts, normal
 
-    def step(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
+    def step(self, action: np.ndarray, *, feedforward: np.ndarray | None = None) -> tuple[dict, float, bool, bool, dict]:
         if self._done:
             raise RuntimeError("call reset() before stepping or after episode end")
         action = np.asarray(action, dtype=float)
         if action.shape != (g1.NJ,) or not np.all(np.isfinite(action)):
             raise ValueError("action must contain 29 finite joint offsets in radians")
+        ff = np.zeros(g1.NJ) if feedforward is None else np.asarray(feedforward, dtype=float)
+        if ff.shape != (g1.NJ,) or not np.all(np.isfinite(ff)):
+            raise ValueError("feedforward must contain 29 finite torques")
         k = self.index
         requested = self.home + action
         target = np.clip(requested, self.target_low, self.target_high)
@@ -141,6 +145,7 @@ class TrackingEnv:
                                    + self.model.actuator_biasprm[:, 1] * self.data.qpos[7:]
                                    + self.model.actuator_biasprm[:, 2] * self.data.qvel[6:])
             self.data.qfrc_applied[:] = 0
+            self.data.qfrc_applied[6:] = ff
             self.data.xfrc_applied[:] = 0
             mujoco.mj_step(self.model, self.data)
             torque[j] = self.data.qfrc_actuator[6:]
@@ -160,6 +165,7 @@ class TrackingEnv:
         terminated = min_height < 0.4
         truncated = self.index == self.length and not terminated
         self._done = terminated or truncated
+        total_torque = torque + ff
         mean_torque = torque.mean(axis=0)
         info = {
             "interval_index": k, "state_index": self.index, "time": float(self.data.time),
@@ -169,13 +175,16 @@ class TrackingEnv:
             "target_clipped": requested != target,
             "substep_start_time": times, "substep_torque": torque,
             "substep_requested_torque": requested_torque,
+            "feedforward_torque": ff.copy(), "substep_total_torque": total_torque,
+            "mean_total_torque": total_torque.mean(axis=0),
+            "effort_ok": bool(np.all(np.abs(total_torque) / self.effort_limits <= 1.0 + 1e-6)),
             "substep_contact_count": contact_counts, "substep_contact_normal": contact_normal,
             "mean_torque": mean_torque, "reference_torque": self.ref["tau"][k].copy(),
-            "peak_effort_ratio": float(np.max(np.abs(torque) / self.effort_limits)),
+            "peak_effort_ratio": float(np.max(np.abs(total_torque) / self.effort_limits)),
             "saturated_fraction": float(np.mean(np.abs(requested_torque - torque) > 1e-6)),
             "pelvis_error": float(np.linalg.norm(self.data.qpos[:3] - self.ref["qpos"][self.index, :3])),
             "joint_rms_error": float(np.sqrt(np.mean((self.data.qpos[7:] - self.ref["qpos"][self.index, 7:]) ** 2))),
-            "torque_rms_error": float(np.sqrt(np.mean((mean_torque - self.ref["tau"][k]) ** 2))),
+            "torque_rms_error": float(np.sqrt(np.mean((total_torque.mean(axis=0) - self.ref["tau"][k]) ** 2))),
             "min_pelvis_height": min_height, "reward_components": components,
         }
         return self.observation(), float(np.mean(list(components.values()))), terminated, truncated, info

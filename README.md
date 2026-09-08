@@ -1,87 +1,157 @@
-# opt2skill
+# opt2skill-experiments
 
-A learning-focused Opt2Skill proof of concept for the Unitree G1. Specify a squat,
-optimize it with Crocoddyl and Pinocchio, then validate and replay it in MuJoCo.
+An independent, learning-focused implementation of trajectory-generation experiments
+inspired by [Opt2Skill](https://opt2skill.github.io/), using the Unitree G1 humanoid.
+Specify a squat, optimize it with Crocoddyl and Pinocchio, then validate and replay
+it in MuJoCo. This is not the paper authors' official implementation.
 
 ![Unitree G1 squatting in MuJoCo with colored reference keypoints](img/mujoco_screen.png)
 
 *G1 squat visualization in MuJoCo, with reference keypoints shown as colored spheres.*
 
-## Current state
+## Features and scope
 
-- **Robot model reconciliation:** shared joint order, limits, frames, and ten checks
-  comparing the Pinocchio and MuJoCo models.
-- **Trajectory generation:** whole-body squats with both feet planted, feasibility
-  filtering, torque and contact-wrench export, and randomized datasets.
-- **Validation and visualization:** inverse-dynamics checks, feedforward-plus-PD
-  replay, a PD-only comparison, and a viewer with reference keypoints.
-- **Policy training:** not implemented. There is no RL environment, training CLI,
-  trained policy, or hardware deployment in this package.
+- Compare Pinocchio and MuJoCo models using shared joint order, limits, and frames.
+- Optimize whole-body squats with both feet planted, including joint torque and
+  contact-wrench references.
+- Generate randomized datasets with feasibility filtering and train/validation/test splits.
+- Check inverse-dynamics agreement and simulate feedforward-plus-PD tracking.
+- View planned motion and physics replay with reference keypoints.
 
-The local review on 2026-09-08 passed all 40 tests and all ten model checks. All
-100 saved dataset trajectories passed inverse dynamics and stabilized replay;
-maximum pelvis error was 1.37 cm. These are measured results for the local data
-and configured controller, not guarantees for other motions or learned policies.
+The Python package is named `o2s`. Policy training, changing contact schedules,
+manipulation, and hardware deployment are not implemented. The existing replay
+controller is a simulation baseline, not a trained policy.
 
-## Run on this machine
+## Requirements
 
-Open WSL from PowerShell:
+- Ubuntu, either natively or under WSL2 on Windows. Development and verification
+  have used Ubuntu 26.04 under WSL2; other Ubuntu releases are not yet verified.
+- Python **3.12**, managed below with [uv](https://docs.astral.sh/uv/getting-started/installation/).
+- Git and an internet connection for Python dependencies and robot assets.
+- A graphical desktop with OpenGL for the interactive viewer; WSL users need
+  [WSLg support](https://learn.microsoft.com/en-us/windows/wsl/tutorials/gui-apps).
+
+Trajectory optimization and numerical validation run on the CPU; CUDA is not
+required. Use the Linux environment for all Python commands on Windows.
+
+## Installation
+
+### Windows: install Ubuntu with WSL2
+
+If WSL is not installed, run this in an **administrator PowerShell** window:
 
 ```powershell
-wsl -d Ubuntu-26.04
+wsl --install -d Ubuntu
 ```
 
-Then run inside WSL:
+Restart if prompted, open Ubuntu, and complete the Linux user setup. Check
+`wsl --list --verbose` in PowerShell to confirm the distribution uses WSL2.
+See Microsoft's [WSL installation guide](https://learn.microsoft.com/en-us/windows/wsl/install)
+for existing installations or alternative distributions.
+
+Continue below in the Ubuntu terminal. Native Ubuntu users can start here directly.
+
+### Ubuntu: clone and install
+
+Install Git if needed, and install `uv` using its
+[installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-cd /mnt/e/Programming/opt2skill
-source ~/venvs/o2s-to/bin/activate
-python -m pytest -q
-python -m o2s.models.reconcile
-python -m o2s.reference.validate data/refs/dev/squat_dev.npz
-python -m o2s.reference.view data/refs/dev/squat_dev.npz --mode kinematic --loop
-```
+sudo apt update
+sudo apt install -y git
 
-Close the viewer, then try physics replay:
-
-```bash
-python -m o2s.reference.view data/refs/dev/squat_dev.npz --mode replay --loop
-```
-
-Kinematic mode poses the robot directly. Replay simulates reference torque plus
-PD feedback. The viewer uses WSLg; the numerical checks do not require a window.
-
-## Fresh environment
-
-From the project root inside WSL2 Ubuntu, with `uv` and Git installed:
-
-```bash
-uv venv ~/venvs/o2s-to --python 3.12
-source ~/venvs/o2s-to/bin/activate
+git clone https://github.com/Oszkar/opt2skill-experiments.git
+cd opt2skill-experiments
+uv venv .venv --python 3.12
+source .venv/bin/activate
 uv pip install -e ".[trajopt,dev]"
 bash scripts/fetch_assets.sh
-python -m pytest -q
+```
+
+Run subsequent commands from the repository root with the virtual environment
+active. In a new terminal, return to the repository and run
+`source .venv/bin/activate` again.
+
+The asset script fetches pinned revisions of Unitree ROS, MuJoCo Menagerie, and
+MuJoCo Playground into `~/o2s_third_party`. To use another location, set
+`O2S_THIRD_PARTY` before fetching **and** whenever running the tools. Keep the
+Crocoddyl and Pinocchio versions pinned in `pyproject.toml`: incompatible binary
+versions can crash the solver. Third-party robot assets retain their own licenses.
+
+## Quick start
+
+Check the models, then generate and validate a 20 cm squat:
+
+```bash
+python -m o2s.models.reconcile
 python -m o2s.trajopt.solve_one --depth 0.2 --out data/refs/dev/squat_dev.npz
 python -m o2s.reference.validate data/refs/dev/squat_dev.npz
 ```
 
-The supported workflow uses Linux under WSL. Assets are fetched at pinned commits
-into `~/o2s_third_party` (override with `O2S_THIRD_PARTY`). Install both extras to
-run the full suite: asset-dependent tests skip when assets are missing, but test
-collection still imports the simulation packages. Generated `data/` is ignored
-by Git and must be regenerated on a fresh checkout.
+Reconciliation should print ten `[ok]` results. Validation should print `[ok]` for
+inverse dynamics and feedforward replay, plus an `[info]` PD-only comparison.
+PD-only replay falls on the tested default squat; that informational result does
+not make validation fail.
 
-## Documentation
+View the motion, closing each window before running the next command:
 
-- [Hands-on guide](docs/TRAJECTORY_GUIDE.md): code map, commands, experiments,
-  reference conventions, and what validation means.
-- [Visual guide](docs/TRAJECTORY_DIAGRAMS.md): diagrams of optimization, export,
-  simulation, and the proposed policy interface.
-- [Next steps](docs/NEXT_STEPS.md): remaining reliability work and policy training.
-- [Knowledge base](KNOWLEDGEBASE.md): retained research notes, historical
-  experiments, environment gotchas, and detailed policy design notes.
+```bash
+python -m o2s.reference.view data/refs/dev/squat_dev.npz --mode kinematic --loop
+python -m o2s.reference.view data/refs/dev/squat_dev.npz --mode replay --loop
+```
+
+**Kinematic** mode poses the robot directly from the reference. **Replay** mode
+simulates reference torque plus PD feedback. If a display is unavailable, skip
+the viewer; generation and numerical validation do not require a window.
+
+Change `--depth`, `--t-down`, `--t-hold`, `--t-up`, or `--com-shift-x` to experiment.
+Use a different output filename for each attempt. The solver exits with failure
+when a motion fails the feasibility filter and normally does not write a file;
+an older output at the same path would remain. Run `--help` on `solve_one`,
+`generate`, or `view` for their options.
+
+## Generate a dataset
+
+```bash
+python -m o2s.trajopt.generate --n 100 --out data/refs/squats_01 --seed 0
+```
+
+Outputs include reference `.npz` files, `split.json`, `summary.json`, and
+`rejected.jsonl`. Generated data is ignored by Git and is not included in a clone.
+Always choose a **new output directory**: the generator does not resume or clear
+old runs and can leave stale files if a directory is reused.
+
+Dataset acceptance requires optimization feasibility and inverse-dynamics
+agreement. Stabilized replay is recorded in metadata but does **not** gate
+acceptance. Inspect the replay results before using a dataset for training.
+
+## Tests and limitations
+
+```bash
+python -m pytest -q
+```
+
+Install both `trajopt` and `dev` extras and fetch the assets before running the
+full suite. Asset-dependent tests skip when assets are missing, but test
+collection still imports the simulation packages.
+
+Validation measures agreement between two models and tracking under a specific
+controller. It does not establish hardware readiness or torque compliance at
+every physics substep. Rotated-foot wrench conventions and strict validation of
+reference timing/quaternions remain open work. See [next steps](docs/NEXT_STEPS.md)
+and the [reference conventions](docs/TRAJECTORY_GUIDE.md#reference-conventions-and-limitations).
+
+## Documentation and learning materials
+
+- [Hands-on guide](docs/TRAJECTORY_GUIDE.md): code map, experiments, and reference conventions.
+- [Visual guide](docs/TRAJECTORY_DIAGRAMS.md): optimization, export, and simulation diagrams.
+- [Next steps](docs/NEXT_STEPS.md): reliability improvements and proposed policy training.
+- [Knowledge base](KNOWLEDGEBASE.md): research notes, historical measurements, and environment gotchas.
 - [Study booklet](<Opt2Skill Study Booklet.html>) and [saved paper](Opt2Skill_paper.htm):
-  retained learning materials; open the HTML files in a browser.
+  download or open the local HTML files in a browser; GitHub's file view is not an HTML viewer.
 
-Use the README and hands-on guide for current behavior. Historical learning
+Use this README and the hands-on guide for current behavior. Historical learning
 notes may describe earlier experiments or proposed features.
+
+Bug reports and focused improvements are welcome. For reproducible reports,
+include the command, Python and dependency versions, and relevant error output.

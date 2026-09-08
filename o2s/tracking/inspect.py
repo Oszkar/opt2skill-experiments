@@ -54,11 +54,14 @@ def run_episode(env: TrackingEnv, controller: str = "reference", *, view: bool =
                         draw_ghost(viewer, env.ref, env.index)
                 info.update(reward=reward, terminated=terminated, truncated=truncated, observation=obs)
                 records.append(info)
+                if (viewer is not None or env.equations is not None) and (env.index % 10 == 0 or terminated or truncated):
+                    print(f"t={info['time']:.2f}s | pelvis error={info['pelvis_error']:.4f}m | "
+                          f"effort={info['peak_effort_ratio']:.3f} | reward={reward:.3f} | {info['reason']}", flush=True)
+                    if env.equations is not None:
+                        from o2s.tracking.equations import live_values
+                        print(live_values(env, info), flush=True)
                 if viewer is not None:
                     viewer.sync()
-                    if env.index % 10 == 0 or terminated or truncated:
-                        print(f"t={info['time']:.2f}s | pelvis error={info['pelvis_error']:.4f}m | "
-                              f"effort={info['peak_effort_ratio']:.3f} | reward={reward:.3f} | {info['reason']}", flush=True)
                     time.sleep(max(0., contract.DT - (time.monotonic() - started)))
                 if terminated or truncated:
                     break
@@ -152,6 +155,9 @@ def write_outputs(out: Path, env: TrackingEnv, initial: dict, records: list[dict
         ax.legend(fontsize=8)
     fig.savefig(out / "diagnostics.png", dpi=140)
     plt.close(fig)
+    if env.equations is not None:
+        from o2s.tracking.equations import write_equations
+        write_equations(out, env, records, controller)
     return summary
 
 
@@ -161,10 +167,11 @@ def main() -> int:
     ap.add_argument("--controller", choices=CONTROLLERS, default="reference")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--view", action="store_true", help="Show MuJoCo at real time with live terminal metrics")
+    ap.add_argument("--equations", action="store_true", help="Add equation plots, arrays and CLI values (requires optimizer dependencies)")
     args = ap.parse_args()
     if args.out.exists() and (not args.out.is_dir() or any(args.out.iterdir())):
         ap.error("--out must be a new or empty directory")
-    env = TrackingEnv(args.reference)
+    env = TrackingEnv(args.reference, equations=args.equations)
     initial, records = run_episode(env, args.controller, view=args.view)
     if not records:
         print("Viewer closed before the first step; no trace written.")
@@ -174,6 +181,8 @@ def main() -> int:
     print(json.dumps({k: summary[k] for k in ("controller", "steps", "reason", "simulated_seconds",
                      "max_pelvis_error_m", "max_effort_ratio", "saturated_fraction", "mean_reward")}, indent=2))
     print(f"Wrote {args.out}: summary.json, steps.csv, trace.npz, diagnostics.png")
+    if args.equations:
+        print("Equation diagnostics: equations.png, equations.npz, equations.json")
     return 0  # A recorded fall is an experiment result, not a CLI failure.
 
 

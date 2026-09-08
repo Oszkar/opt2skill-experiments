@@ -1,6 +1,8 @@
 """Convert a SquatSolution into the reference contract arrays (MuJoCo conventions)."""
 from __future__ import annotations
 
+from dataclasses import asdict
+
 import numpy as np
 import pinocchio as pin
 
@@ -54,6 +56,7 @@ def solution_to_reference(sol, pin_model: pin.Model, mj_model, cfg: dict) -> dic
 def solution_meta(sol, filter_result, cfg: dict) -> dict:
     p = sol.params
     return {
+        "weights": asdict(sol.weights),
         "depth": p.depth, "t_stand0": p.t_stand0, "t_down": p.t_down, "t_hold": p.t_hold, "t_up": p.t_up,
         "t_stand1": p.t_stand1, "com_shift_x": p.com_shift_x, "dt": p.dt,
         "solver": {"converged": sol.converged, "iters": sol.iters, "cost": sol.cost, "solve_time": sol.solve_time},

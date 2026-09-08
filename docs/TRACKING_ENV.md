@@ -74,6 +74,10 @@ drive torque, and optimized reference torque. In the successful run, feedforward
 supplies most of the planned load while PD corrects tracking errors. This is a
 validated replay baseline, not a learned policy.
 
+For paper-equation costs, force balance and contact-motion plots, add
+`--equations`. See [Watching the equations](TRACKING_EQUATIONS.md) for the
+CLI readouts, units, solver residuals and current terminal-cost artifact.
+
 ## The interface
 
 ```python

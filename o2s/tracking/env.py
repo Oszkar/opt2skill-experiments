@@ -43,7 +43,7 @@ class TrackingEnv:
     completing N intervals truncates. A fall takes precedence at the last interval.
     """
 
-    def __init__(self, reference: str | Path):
+    def __init__(self, reference: str | Path, *, equations: bool = False):
         self.reference_path = Path(reference)
         self.ref, self.meta = contract.load(self.reference_path)
         self.length = contract.validate(self.ref)
@@ -73,6 +73,10 @@ class TrackingEnv:
         self.index = 0
         self.previous_action = np.zeros(g1.NJ)
         self._done = True
+        self.equations = None
+        if equations:
+            from o2s.tracking.equations import EquationMonitor
+            self.equations = EquationMonitor(self)
 
     def observation(self) -> dict[str, np.ndarray]:
         k = self.index
@@ -137,6 +141,7 @@ class TrackingEnv:
         contact_normal = np.empty((self.substeps, 2))
         times = np.empty(self.substeps)
         min_height = float(self.data.qpos[2])
+        equation_samples = []
         for j in range(self.substeps):
             times[j] = self.data.time
             # G1 gear-1 affine position servos; evaluate at the substep's pre-integration state.
@@ -147,6 +152,8 @@ class TrackingEnv:
             self.data.qfrc_applied[:] = 0
             self.data.qfrc_applied[6:] = ff
             self.data.xfrc_applied[:] = 0
+            if self.equations is not None:
+                equation_samples.append(self.equations.sample(self.data))
             mujoco.mj_step(self.model, self.data)
             torque[j] = self.data.qfrc_actuator[6:]
             contact_counts[j], contact_normal[j] = self._contacts()
@@ -187,4 +194,7 @@ class TrackingEnv:
             "torque_rms_error": float(np.sqrt(np.mean((total_torque.mean(axis=0) - self.ref["tau"][k]) ** 2))),
             "min_pelvis_height": min_height, "reward_components": components,
         }
+        if equation_samples:
+            info["equations"] = {key: np.stack([sample[key] for sample in equation_samples])
+                                 for key in equation_samples[0]}
         return self.observation(), float(np.mean(list(components.values()))), terminated, truncated, info

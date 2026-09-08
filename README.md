@@ -130,6 +130,9 @@ Use `--controller stabilized-pd` or `--controller stabilized-ff` for matched
 validation-controller comparisons. Add `--view` to watch MuJoCo with live terminal
 metrics; see [the comparison guide](docs/TRACKING_ENV.md#compare-the-validation-controller).
 
+Add `--equations` for optimizer cost components, dynamics balance and sole-motion
+plots, plus CLI values during the run. See [the equation guide](docs/TRACKING_EQUATIONS.md).
+
 ## Generate a dataset
 
 ```bash

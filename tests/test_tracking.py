@@ -24,7 +24,8 @@ def reference_path(tmp_path_factory, mj_model, pin_model, cfg):
     assert sol.converged
     ref = export.solution_to_reference(sol, pin_model, mj_model, cfg)
     path = tmp_path_factory.mktemp("tracking") / "reference.npz"
-    contract.save(path, ref, {})
+    from o2s.trajopt.filter import check_solution
+    contract.save(path, ref, export.solution_meta(sol, check_solution(sol, ref, pin_model, cfg), cfg))
     return path
 
 
@@ -199,3 +200,67 @@ def test_invalid_feedforward_does_not_advance(env, ff):
     with pytest.raises(ValueError, match="feedforward"):
         env.step(obs["reference_joint_position"], feedforward=ff)
     assert env.data.time == 0 and env.index == 0
+
+
+
+def test_equations_preserve_simulation_and_export(reference_path, tmp_path, capsys):
+    plain = TrackingEnv(reference_path)
+    observed = TrackingEnv(reference_path, equations=True)
+    _, expected = run_episode(plain, "stabilized-ff")
+    initial, records = run_episode(observed, "stabilized-ff")
+    np.testing.assert_array_equal([r["qpos"] for r in records], [r["qpos"] for r in expected])
+    np.testing.assert_array_equal([r["substep_total_torque"] for r in records],
+                                  [r["substep_total_torque"] for r in expected])
+    obj = observed.equations.objective
+    assert obj["total"] == pytest.approx(observed.meta["solver"]["cost"], rel=1e-10)
+    np.testing.assert_allclose(obj["raw_u"] + observed.model.dof_damping[6:] * .5 *
+                               (observed.ref["qvel"][:-1, 6:] + observed.ref["qvel"][1:, 6:]), observed.ref["tau"])
+    write_outputs(tmp_path, observed, initial, records, "stabilized-ff")
+    assert (tmp_path / "equations.png").read_bytes().startswith(b"\x89PNG")
+    with np.load(tmp_path / "equations.npz") as a:
+        assert a["sole_velocity"].shape == (observed.length, 10, 2, 6)
+        assert a["inertia"].shape == (observed.length, 10, 35)
+        assert a["running_cost"].sum() + a["terminal_cost"].sum() == pytest.approx(obj["total"])
+    log = capsys.readouterr().out
+    assert "2a planned" in log and "2b at" in log and "2c sole speed" in log
+
+
+def test_equation_force_projection_and_contact_derivative(reference_path):
+    env = TrackingEnv(reference_path, equations=True)
+    env.reset()
+    env.data.qpos[:] = env.ref["qpos"][45]
+    env.data.qvel[:] = env.ref["qvel"][45]
+    # Accurate scratch dynamics makes the balance test independent of iteration truncation.
+    env.model.opt.iterations = 100
+    env.model.opt.ls_iterations = 100
+    r = env.equations.sample(env.data)
+    m, d = env.model, env.equations.data
+    assert np.max(np.abs(r["balance_residual"])) < 1e-7
+    contact_forces = d.efc_force.copy()
+    contact_forces[d.efc_type < int(mujoco.mjtConstraint.mjCNSTR_CONTACT_FRICTIONLESS)] = 0
+    projected = np.zeros(m.nv)
+    mujoco.mj_mulJacTVec(m, d, projected, contact_forces)
+    np.testing.assert_allclose(r["contact"], projected, atol=1e-8)
+    # Independently approximate dJ/dt by perturbing configuration along v.
+    eps = 1e-6
+    jacobians = []
+    body = env.equations.soles[0]
+    for sign in (-1, 1):
+        perturbed = mujoco.MjData(m)
+        mujoco.mj_copyData(perturbed, m, d)
+        mujoco.mj_integratePos(m, perturbed.qpos, d.qvel, sign * eps)
+        mujoco.mj_forward(m, perturbed)
+        point = perturbed.xpos[body] + perturbed.xmat[body].reshape(3, 3) @ env.equations.offset
+        jac = np.zeros((6, m.nv))
+        mujoco.mj_jac(m, perturbed, jac[:3], jac[3:], point, body)
+        jacobians.append(jac)
+    derivative = (jacobians[1] - jacobians[0]) / (2 * eps)
+    np.testing.assert_allclose(r["sole_jdot_v"][0], derivative @ d.qvel, atol=1e-7)
+
+
+def test_equation_cost_rejects_incompatible_provenance(reference_path):
+    from o2s.trajopt.diagnostics import objective_components
+    env = TrackingEnv(reference_path)
+    meta = dict(env.meta, weights={**env.meta["weights"], "control_reg": 100})
+    with pytest.raises(ValueError, match="differs from saved cost"):
+        objective_components(env.ref, meta, env.model, env.cfg)

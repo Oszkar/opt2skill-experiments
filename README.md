@@ -17,6 +17,7 @@ it in MuJoCo. This is not the paper authors' official implementation.
 - Generate randomized datasets with feasibility filtering and train/validation/test splits.
 - Check inverse-dynamics agreement and simulate feedforward-plus-PD tracking.
 - View planned motion and physics replay with reference keypoints.
+- Inspect an action-driven tracking environment with per-substep diagnostics and plots.
 
 The Python package is named `o2s`. Policy training, changing contact schedules,
 manipulation, and hardware deployment are not implemented. The existing replay
@@ -110,6 +111,21 @@ when a motion fails the feasibility filter and normally does not write a file;
 an older output at the same path would remain. Run `--help` on `solve_one`,
 `generate`, or `view` for their options.
 
+## Inspect the tracking environment
+
+Run a scripted joint-target controller through the minimal reset/step environment:
+
+```bash
+python -m o2s.tracking.inspect data/refs/dev/squat_dev.npz --controller reference --out runs/inspect_01
+```
+
+This headless command writes `diagnostics.png`, `steps.csv`, `trace.npz`, and
+`summary.json`. It uses the original actuator gains and no feedforward torque;
+a fall is a recorded controller outcome, not a reference-validation failure.
+See the [tracking environment guide](docs/TRACKING_ENV.md) for action/observation
+conventions, reward components, and how to inspect the trace. No RL framework is
+required and no policy is trained yet.
+
 ## Generate a dataset
 
 ```bash
@@ -147,6 +163,7 @@ and the [reference conventions](docs/TRAJECTORY_GUIDE.md#reference-conventions-a
 
 - [Hands-on guide](docs/TRAJECTORY_GUIDE.md): code map, experiments, and reference conventions.
 - [Visual guide](docs/TRAJECTORY_DIAGRAMS.md): optimization, export, and simulation diagrams.
+- [Tracking environment](docs/TRACKING_ENV.md): reset/step interface and diagnostics.
 - [Next steps](docs/NEXT_STEPS.md): reliability improvements and proposed policy training.
 - [Knowledge base](KNOWLEDGEBASE.md): research notes, historical measurements, and environment gotchas.
 - [Study booklet](<Opt2Skill Study Booklet.html>) and [saved paper](Opt2Skill_paper.htm):

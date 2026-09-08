@@ -1,7 +1,8 @@
 # Next steps
 
 Trajectory generation, model reconciliation, reference export, numerical
-validation, and visualization are implemented. Policy training and hardware
+validation, visualization, and a [single-reference tracking environment](TRACKING_ENV.md)
+with diagnostic traces are implemented. Policy training and hardware
 execution are not. See the [hands-on guide](TRAJECTORY_GUIDE.md) to use what exists.
 
 ## Make reference data a reliable training input
@@ -25,9 +26,10 @@ They are proposals, not an implemented training interface.
 1. Verify a compatible MuJoCo Playground, MJX, JAX, and GPU environment separately
    from the working trajectory-optimization environment. There is no `rl` package
    extra or training command yet; select and test dependencies before adding one.
-2. Implement a tracking environment that samples references, respects valid lengths,
-   and handles reset, terminal state, observations, action scaling, and rewards.
-   Start with 50 Hz control against the existing 20 ms references.
+2. Adapt the tested single-reference reset/step environment to the chosen learning
+   framework. Preserve timing, actuator limits, and diagnostic coverage; settle
+   policy action scaling and rewards before treating them as paper comparisons.
+   Add dataset sampling only after the single-reference learner works.
 3. Train on one short trajectory and establish stable tracking before introducing
    dataset sampling or domain randomization.
 4. Compare position-based tracking with torque-informed tracking using matched

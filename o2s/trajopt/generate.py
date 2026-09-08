@@ -1,15 +1,11 @@
 """Generate a randomized, filtered squat reference dataset with a train/val/test split.
 
 After a solve passes the trajectory-optimization filter (`filter.check_solution`), the exported
-reference is additionally gated on MuJoCo inverse-dynamics consistency
-(`validate.check_inverse_dynamics`): a failure there is a hard rejection, written to
-`rejected.jsonl` with the check's message as the failure string, because it means the exported
-torques do not reproduce what MuJoCo's own dynamics require. A closed-loop, PD-plus-feedforward
-replay check (`validate.check_replay(..., feedforward=True)`) is also run on every accepted
-trajectory and recorded under `meta["replay_ff"]` (`ok` plus the full `check_replay` metrics
-dict), but it does not gate acceptance -- it is informational, since a nontrivial fraction of the
-sampled `SquatRanges` space is known to fail this closed-loop check even though it is dynamically
-consistent and satisfies `filter.check_solution`.
+reference is additionally gated on MuJoCo inverse-dynamics consistency and replay torque
+limits. Every exported reference torque and every simulated substep's total feedforward-plus-PD
+torque must stay within the configured joint effort limits. Other closed-loop tracking metrics
+are recorded under meta["replay_ff"] but do not gate acceptance. The output must be new or empty;
+existing data is never resumed or overwritten by this CLI.
 
 An exception raised anywhere in solving, exporting, or filtering a sampled solution (e.g. NaNs
 from a badly-conditioned solve) is caught and rejected with stage "solve" rather than propagating,
@@ -73,16 +69,19 @@ def main() -> int:
     ap.add_argument("--max-attempts", type=int, default=300)
     args = ap.parse_args()
 
+    if args.out.exists() and (not args.out.is_dir() or any(args.out.iterdir())):
+        ap.error(f"output must be a new or empty directory: {args.out}; choose a different --out")
+    args.out.mkdir(parents=True, exist_ok=True)
+
     cfg = g1.load_config()
     mj_model = g1.load_mj_model(cfg)
     pin_model = g1.load_pin_model(cfg)
     rng = np.random.default_rng(args.seed)
     ranges = SquatRanges()
-    args.out.mkdir(parents=True, exist_ok=True)
     accepted, attempts, times, depths = [], 0, [], []
     replay_oks, replay_falls = [], []
     t_start = time.time()
-    with open(args.out / "rejected.jsonl", "w", encoding="utf-8") as rejected:
+    with open(args.out / "rejected.jsonl", "x", encoding="utf-8") as rejected:
         while len(accepted) < args.n and attempts < args.max_attempts:
             attempts += 1
             params = sample_params(rng, ranges)
@@ -109,6 +108,10 @@ def main() -> int:
                 print(f"[{attempts:3d}] reject depth={params.depth:.3f}: {id_check.message}")
                 continue
             replay = validate.check_replay(mj_model, ref, cfg, feedforward=True)
+            if not replay.metrics["effort_ok"]:
+                rejected.write(json.dumps({"params": params.__dict__, "failures": [replay.message], "iters": sol.iters, "stage": "replay_effort"}) + "\n")
+                print(f"[{attempts:3d}] reject depth={params.depth:.3f}: replay torque limit exceeded")
+                continue
             name = f"squat_{len(accepted):04d}"
             meta = export.solution_meta(sol, res, cfg)
             meta["replay_ff"] = {"ok": replay.ok, **replay.metrics}

@@ -6,15 +6,15 @@ execution are not. See the [hands-on guide](TRAJECTORY_GUIDE.md) to use what exi
 
 ## Make reference data a reliable training input
 
-1. Reject nonempty dataset output directories by default, or implement an explicit
-   resume/overwrite policy. Verify file membership agrees with the split and summary.
-2. Strengthen the reference contract: positive interval count, monotonic uniform
-   20 ms timing, unit quaternions, metadata consistency, and padding masks.
-   Validate squat parameters before invoking the solver.
-3. Check exported torque after damping compensation and total applied torque at
-   every replay substep. Decide whether torque saturation and replay failures should
-   gate training data acceptance; record the chosen acceptance policy with the data.
-4. Capture a reproducible dependency lock and dataset provenance, including code,
+Implemented safeguards now reject nonempty output directories, enforce positive
+reference lengths and valid 20 ms timing/unit quaternions, and gate exported plus
+per-physics-substep replay torque limits. Remaining work:
+
+1. Validate squat parameters before solving, and check metadata consistency and
+   padding-mask use at the future training boundary.
+2. Decide whether replay tracking failures should also gate training data; they
+   remain informational during generation, unlike torque violations.
+3. Capture a reproducible dependency lock and dataset provenance, including code,
    config, solver weights, and library versions. Asset commits are already pinned.
 
 ## Build a tracking policy

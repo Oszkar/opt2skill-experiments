@@ -86,8 +86,8 @@ The generator samples squat depth, timing, and CoM shift. It writes numbered
 70/10/20 split in `split.json` (rounded for small datasets). It exits with failure
 if `--max-attempts` is reached before the requested count is accepted.
 
-**Existing output directories are not cleared or resumed.** Rerunning there can
-overwrite files and metadata while leaving surplus old trajectories behind.
+**Nonempty output directories are rejected before model loading or file writes.**
+Use a new or empty directory. Existing runs are not resumed or cleared.
 
 ```bash
 python - <<'PY'
@@ -111,7 +111,8 @@ PY
 |---|---|---|
 | Optimization feasibility | Not rerun; inspect exported metadata | Required before acceptance |
 | Inverse-dynamics consistency | Must pass | Must pass |
-| Feedforward-plus-PD replay | Must pass | Recorded in metadata; failure does not reject the file |
+| Exported and per-substep total torque limits | Must pass in feedforward replay | Must pass |
+| Feedforward-plus-PD tracking | Must pass | Recorded in metadata; tracking failure does not reject the file |
 | PD-only replay | Informational | Not run |
 
 Inverse dynamics compares MuJoCo's required generalized forces against the
@@ -122,8 +123,14 @@ stability. Joint residual limits are 0.01 N m RMS and 0.2 N m maximum.
 Stabilized replay uses 4x the model's position gains with ankle pitch set to
 400 N m/rad. It requires pelvis height above 0.4 m, pelvis error below 3 cm,
 joint error below 0.03 rad RMS, and leg PD correction below 25% of reference RMS
-torque. The PD-only comparison falls on the tested default squat. This is a
-controller comparison, not a learned Pos versus Pos+T policy ablation.
+torque. Exported reference torque and total drive torque must also remain within
+configured limits (ratio tolerance 1e-6). `peak_effort_ratio` is now the maximum
+across physics substeps; `peak_interval_mean_effort_ratio` retains the average-based
+comparison, and `effort_violation_substeps` counts offending substeps. Fresh replay
+metadata carries `effort_checked_per_substep=1`; older saved metadata must be
+recomputed to obtain these guarantees. The PD-only comparison falls on the tested
+default squat. This is a controller comparison, not a learned Pos versus Pos+T
+policy ablation.
 
 ## Reference conventions and limitations
 
@@ -142,12 +149,13 @@ State N has no torque or wrench sample. Padded rows must be masked using lengths
   wrenches act at sole origins offset by `(0.04, 0, -0.037)` in the ankle-link frame.
 - Wrenches use world-aligned axes at each sole. Rotated-foot cases remain unverified;
   these trajectories keep both feet flat and planted.
-- The optimizer bounds its raw torque. Export adds damping afterward. Replay applies
-  feedforward as external generalized force, outside actuator clipping. Its reported
-  effort ratio uses interval means and does not gate success; it is not a motor-limit
-  guarantee at every physics substep.
-- The loader checks shapes and finiteness, but does not yet enforce valid time grids
-  or unit quaternions. Current generated data follows the intended conventions.
+- The optimizer bounds its raw torque; the filter also checks exported torque after
+  damping compensation. Replay still applies feedforward externally, outside actuator
+  clipping, but rejects total drive torque violations at any Euler physics substep.
+  Passive damping and contact forces are not counted as motor torque.
+- The loader checks shapes, finiteness, at least one interval, and time starting at
+  zero with uniform 20 ms steps (1e-9 s absolute tolerance). Base quaternions in
+  `qpos` and `pelvis_quat` must be unit length and agree up to sign (1e-6 tolerance).
 
 The [knowledge base](../KNOWLEDGEBASE.md) retains tuning history and detailed
 measurements. Current defaults and acceptance thresholds live in the code.

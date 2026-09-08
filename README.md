@@ -118,12 +118,13 @@ python -m o2s.trajopt.generate --n 100 --out data/refs/squats_01 --seed 0
 
 Outputs include reference `.npz` files, `split.json`, `summary.json`, and
 `rejected.jsonl`. Generated data is ignored by Git and is not included in a clone.
-Always choose a **new output directory**: the generator does not resume or clear
-old runs and can leave stale files if a directory is reused.
+Choose a **new or empty output directory**: the generator rejects any nonempty
+directory before loading models or writing files. It does not resume existing runs.
 
-Dataset acceptance requires optimization feasibility and inverse-dynamics
-agreement. Stabilized replay is recorded in metadata but does **not** gate
-acceptance. Inspect the replay results before using a dataset for training.
+Dataset acceptance requires optimization feasibility, inverse-dynamics agreement,
+exported torque within limits, and total feedforward-plus-PD torque within limits
+at every replay physics substep. Other replay tracking failures are recorded but
+do not reject a trajectory; inspect those results before training.
 
 ## Tests and limitations
 
@@ -136,9 +137,10 @@ full suite. Asset-dependent tests skip when assets are missing, but test
 collection still imports the simulation packages.
 
 Validation measures agreement between two models and tracking under a specific
-controller. It does not establish hardware readiness or torque compliance at
-every physics substep. Rotated-foot wrench conventions and strict validation of
-reference timing/quaternions remain open work. See [next steps](docs/NEXT_STEPS.md)
+controller, including total drive torque at every simulated physics substep. It
+does not establish hardware readiness. Loading rejects empty trajectories, invalid
+20 ms time grids, and invalid or inconsistent base quaternions. Rotated-foot
+wrench conventions remain unverified. See [next steps](docs/NEXT_STEPS.md)
 and the [reference conventions](docs/TRAJECTORY_GUIDE.md#reference-conventions-and-limitations).
 
 ## Documentation and learning materials

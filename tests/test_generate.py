@@ -2,6 +2,7 @@ import json
 import sys
 
 import numpy as np
+import pytest
 
 from o2s.reference import contract
 from o2s.trajopt import generate
@@ -79,3 +80,49 @@ def test_main_accepts_one_trajectory_and_records_full_replay_metrics(tmp_path, m
     # the full check_replay metrics dict is stored, not just the three original fields
     for key in ("max_pelvis_error", "completed", "rms_joint_error", "peak_effort_ratio", "pd_over_ref_legs"):
         assert key in meta["replay_ff"]
+
+
+@pytest.mark.parametrize("entry", ["squat_0000.npz", "summary.json", ".hidden", "subdirectory"])
+def test_rejects_nonempty_output_before_loading_models(tmp_path, monkeypatch, entry):
+    marker = tmp_path / entry
+    if entry == "subdirectory":
+        marker.mkdir()
+    else:
+        marker.write_bytes(b"preserve me")
+    monkeypatch.setattr(sys, "argv", ["generate", "--out", str(tmp_path)])
+    def unexpected_load():
+        pytest.fail("must reject output before model loading")
+    monkeypatch.setattr(generate.g1, "load_config", unexpected_load)
+    with pytest.raises(SystemExit) as exc:
+        generate.main()
+    assert exc.value.code == 2
+    assert list(tmp_path.iterdir()) == [marker]
+    if marker.is_file():
+        assert marker.read_bytes() == b"preserve me"
+
+
+@requires_assets
+def test_rejects_replay_effort_violation_before_saving(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["generate", "--n", "1", "--max-attempts", "1",
+                                      "--seed", "1", "--out", str(tmp_path / "new")])
+    original = generate.validate.check_replay
+    def over_limit(*args, **kwargs):
+        report = original(*args, **kwargs)
+        report.metrics["effort_ok"] = 0.0
+        report.ok = False
+        return report
+    monkeypatch.setattr(generate.validate, "check_replay", over_limit)
+    assert generate.main() == 1
+    assert not list((tmp_path / "new").glob("*.npz"))
+    record = json.loads((tmp_path / "new" / "rejected.jsonl").read_text())
+    assert record["stage"] == "replay_effort"
+
+
+
+def test_rejects_output_file_without_modifying_it(tmp_path, monkeypatch):
+    path = tmp_path / "not-a-directory"
+    path.write_bytes(b"keep")
+    monkeypatch.setattr(sys, "argv", ["generate", "--out", str(path)])
+    with pytest.raises(SystemExit) as exc:
+        generate.main()
+    assert exc.value.code == 2 and path.read_bytes() == b"keep"

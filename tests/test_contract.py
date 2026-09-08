@@ -13,6 +13,7 @@ def make_ref(N: int) -> dict:
         rows = N + 1 if shape[0] == "N+1" else N
         ref[key] = rng.normal(size=(rows, *shape[1:])) if len(shape) > 1 else np.arange(rows) * contract.DT
     ref["qpos"][:, 3:7] /= np.linalg.norm(ref["qpos"][:, 3:7], axis=1, keepdims=True)
+    ref["pelvis_quat"] = ref["qpos"][:, 3:7].copy()
     return ref
 
 
@@ -88,3 +89,61 @@ def test_load_raises_value_error_on_missing_key(tmp_path):
     np.savez_compressed(p, **data)
     with pytest.raises(ValueError, match="com"):
         contract.load(p)
+
+
+@pytest.mark.parametrize("times", [[0, 0, 0], [0, .02, .02], [0, -.02, -.04],
+                                   [0, .02, .05], [.02, .04, .06]])
+def test_rejects_invalid_time_grid(times):
+    ref = make_ref(2)
+    ref["t"] = np.array(times)
+    with pytest.raises(ValueError, match="t:"):
+        contract.validate(ref)
+
+
+def test_rejects_empty_trajectory_and_scalar_torque():
+    with pytest.raises(ValueError, match="at least one"):
+        contract.validate(make_ref(0))
+    ref = make_ref(2)
+    ref["tau"] = np.array(0.0)
+    with pytest.raises(ValueError, match="tau:"):
+        contract.validate(ref)
+
+
+@pytest.mark.parametrize("key", ["qpos", "pelvis_quat"])
+@pytest.mark.parametrize("scale", [0.0, 2.0])
+def test_rejects_nonunit_quaternions(key, scale):
+    ref = make_ref(2)
+    if key == "qpos":
+        ref[key][1, 3:7] *= scale
+    else:
+        ref[key][1] *= scale
+    with pytest.raises(ValueError, match="unit quaternions"):
+        contract.validate(ref)
+
+
+def test_duplicate_quaternion_orientation_and_sign():
+    ref = make_ref(2)
+    ref["pelvis_quat"] *= -1
+    assert contract.validate(ref) == 2
+    ref["pelvis_quat"][1] = np.roll(ref["pelvis_quat"][1], 1)
+    with pytest.raises(ValueError, match="orientation differs"):
+        contract.validate(ref)
+
+
+def test_load_and_save_reject_bad_time_without_writing(tmp_path):
+    ref = make_ref(2)
+    ref["t"][:] = 0
+    path = tmp_path / "bad.npz"
+    with pytest.raises(ValueError, match="t:"):
+        contract.save(path, ref, {})
+    assert not path.exists()
+    np.savez(path, meta=np.array("{}"), **ref)
+    with pytest.raises(ValueError, match="t:"):
+        contract.load(path)
+
+
+
+def test_time_grid_allows_serialization_roundoff():
+    ref = make_ref(2)
+    ref["t"][1] += 1e-10
+    assert contract.validate(ref) == 2

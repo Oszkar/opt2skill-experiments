@@ -1,6 +1,8 @@
 """The reference trajectory contract: which arrays an npz holds, their shapes, frames, and timing.
 
-A trajectory has N control intervals of DT seconds, N+1 state samples and N control samples.
+A trajectory has N >= 1 control intervals of DT seconds, N+1 state samples and N control samples.
+Time starts at zero with a 20 ms step (absolute tolerance 1e-9 s). Both base quaternion
+arrays must have unit norm and agree up to sign (absolute tolerance 1e-6).
   qpos (N+1, 36): MuJoCo layout, base pos world, quat wxyz, 29 joints in MuJoCo order.      time t[k]
   qvel (N+1, 35): base lin vel WORLD, base ang vel pelvis-LOCAL, 29 joint velocities.        time t[k]
   tau  (N, 29):   torque MuJoCo's actuators must output, zero-order hold over [t[k], t[k+1]).
@@ -43,6 +45,8 @@ import numpy as np
 
 DT = 0.02
 NJ = 29
+TIME_ATOL = 1e-9  # seconds; serialization roundoff only
+QUAT_ATOL = 1e-6  # unit-norm and duplicate-orientation tolerance
 
 ARRAY_SPEC: dict[str, tuple] = {
     "t": ("N+1",),
@@ -69,7 +73,12 @@ def validate(ref: dict) -> int:
     missing = [k for k in ARRAY_SPEC if k not in ref]
     if missing:
         raise ValueError(f"missing keys: {missing}")
-    N = int(ref["tau"].shape[0])
+    tau = np.asarray(ref["tau"])
+    if tau.ndim != 2 or tau.shape[1] != NJ:
+        raise ValueError(f"tau: expected shape (N, {NJ}), got {tau.shape}")
+    N = tau.shape[0]
+    if N < 1:
+        raise ValueError("trajectory must contain at least one control interval")
     for key, shape in ARRAY_SPEC.items():
         arr = np.asarray(ref[key])
         rows = N + 1 if shape[0] == "N+1" else N
@@ -78,6 +87,19 @@ def validate(ref: dict) -> int:
             raise ValueError(f"{key}: shape {arr.shape} != {expected}")
         if not np.all(np.isfinite(arr)):
             raise ValueError(f"{key}: contains non-finite values")
+    t = np.asarray(ref["t"])
+    if not np.allclose(t, np.arange(N + 1) * DT, rtol=0.0, atol=TIME_ATOL):
+        raise ValueError(f"t: must start at zero and advance uniformly by {DT} seconds")
+    base_quat = np.asarray(ref["qpos"])[:, 3:7]
+    pelvis_quat = np.asarray(ref["pelvis_quat"])
+    for key, quat in (("qpos base quaternion", base_quat), ("pelvis_quat", pelvis_quat)):
+        if not np.allclose(np.linalg.norm(quat, axis=1), 1.0, rtol=0.0, atol=QUAT_ATOL):
+            raise ValueError(f"{key}: must contain unit quaternions")
+    # q and -q encode the same orientation; neither sign needs to be canonical.
+    mismatch = np.minimum(np.linalg.norm(base_quat - pelvis_quat, axis=1),
+                          np.linalg.norm(base_quat + pelvis_quat, axis=1))
+    if np.any(mismatch > QUAT_ATOL):
+        raise ValueError("pelvis_quat: orientation differs from qpos base quaternion")
     return N
 
 

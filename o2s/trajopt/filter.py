@@ -7,6 +7,7 @@ import numpy as np
 import pinocchio as pin
 
 from o2s.models import g1
+from o2s.reference import contract
 
 JOINT_LIMIT_MARGIN = 0.02        # rad; the optimizer's own barrier uses a wider 0.04 rad margin
 FRICTION_UTILIZATION_MAX = 0.9   # |f_t| / (mu * f_n) must stay under this fraction of the friction cone
@@ -26,6 +27,7 @@ class FilterResult:
 
 
 def check_solution(sol, ref: dict, pin_model: pin.Model, cfg: dict) -> FilterResult:
+    contract.validate(ref)
     failures: list[str] = []
     details: dict[str, float] = {}
     lim = np.asarray(cfg["effort_limits"], dtype=float)
@@ -41,6 +43,11 @@ def check_solution(sol, ref: dict, pin_model: pin.Model, cfg: dict) -> FilterRes
     details["max_torque_ratio"] = ratio
     if ratio > 1.0 + 1e-6:
         failures.append(f"torque ratio {ratio:.3f} > 1")
+
+    exported_ratio = float(np.max(np.abs(ref["tau"]) / lim))
+    details["max_exported_torque_ratio"] = exported_ratio
+    if exported_ratio > 1.0 + 1e-6:
+        failures.append(f"exported torque ratio {exported_ratio:.3f} > 1 (including damping)")
 
     qj = sol.xs[:, 7:nq]
     lo, hi = pin_model.lowerPositionLimit[7:], pin_model.upperPositionLimit[7:]

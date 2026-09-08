@@ -87,3 +87,61 @@ def test_check3_pd_only_replay_is_informational(mj_model, dev_ref, cfg):
 def test_run_all_reports_three_checks(mj_model, dev_ref, cfg):
     reps = validate.run_all(mj_model, dev_ref, cfg)
     assert [r.name for r in reps] == ["inverse_dynamics", "replay_ff", "replay_pd_only"]
+
+
+@requires_assets
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_substep_torque_spike_cannot_hide_in_interval_mean(mj_model, dev_ref, cfg, monkeypatch, sign):
+    # Keep real state integration and tracking, but inject one actuator-torque spike
+    # into the sampled MuJoCo output. Its interval mean stays below the motor limit.
+    original = mujoco.mj_step
+    count = 0
+    def spike(model, data):
+        nonlocal count
+        original(model, data)
+        if count == 0:
+            data.qfrc_actuator[6] = sign * 1.1 * model.jnt_actfrcrange[1, 1] - data.qfrc_applied[6]
+        count += 1
+    monkeypatch.setattr(mujoco, "mj_step", spike)
+    report = validate.check_replay(mj_model, dev_ref, cfg)
+    assert report.metrics["peak_interval_mean_effort_ratio"] < 1
+    assert report.metrics["peak_effort_ratio"] > 1
+    assert report.metrics["effort_violation_substeps"] == 1
+    assert report.metrics["effort_ok"] == 0
+    assert not report.ok
+
+
+@requires_assets
+def test_substep_log_records_feedforward_plus_actuation(mj_model, dev_ref):
+    data = mujoco.MjData(mj_model)
+    validate.set_state(mj_model, data, dev_ref["qpos"][0], dev_ref["qvel"][0])
+    log = np.empty((validate.SUBSTEPS, mj_model.nu))
+    tau = dev_ref["tau"][0]
+    with validate.disabled(mj_model, mujoco.mjtDisableBit.mjDSBL_ACTUATION):
+        mean_pd = validate.step_interval(mj_model, data, tau, None, substep_torques=log)
+    np.testing.assert_allclose(mean_pd, 0)
+    np.testing.assert_allclose(log, np.tile(tau, (validate.SUBSTEPS, 1)))
+
+
+@requires_assets
+def test_combined_feedforward_and_pd_can_exceed_limit(mj_model, dev_ref, monkeypatch):
+    data = mujoco.MjData(mj_model)
+    validate.set_state(mj_model, data, dev_ref["qpos"][0], dev_ref["qvel"][0])
+    limits = mj_model.jnt_actfrcrange[1:, 1]
+    original = mujoco.mj_step
+    def pd_within_limit(model, data):
+        original(model, data)
+        data.qfrc_actuator[6:] = 0.6 * limits
+    monkeypatch.setattr(mujoco, "mj_step", pd_within_limit)
+    log = np.empty((validate.SUBSTEPS, mj_model.nu))
+    validate.step_interval(mj_model, data, 0.6 * limits, None, substep_torques=log)
+    np.testing.assert_allclose(log / limits, 1.2)
+
+
+@requires_assets
+def test_valid_time_roundoff_uses_contract_step(mj_model, dev_ref, cfg):
+    ref = dict(dev_ref)
+    ref["t"] = dev_ref["t"].copy()
+    ref["t"][1] += 1e-10
+    assert validate.check_inverse_dynamics(mj_model, ref, cfg).ok
+    assert validate.check_replay(mj_model, ref, cfg).ok

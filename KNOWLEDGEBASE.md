@@ -460,3 +460,27 @@ while its velocity/contact state makes recovery impossible.
 The useful experiment is therefore whether a learned tracker improves tracking,
 recovery, and runtime cost relative to practical feedback baselines. RL is an
 approach to evaluate, not a necessary consequence of having optimized references.
+
+
+### 9.7 Validation safeguards added after these experiments
+
+The historical effort figures above used interval means. Replay now reports
+`peak_effort_ratio` across every physics substep, keeps the former measure as
+`peak_interval_mean_effort_ratio`, and records `effort_checked_per_substep=1`.
+Both exported reference torque (after damping compensation) and total
+feedforward-plus-PD drive torque must respect configured effort bounds. Violations
+fail feedforward validation and reject generated trajectories. Other replay
+tracking failures remain informational in generation. The feedforward path is
+still external/unclipped: the check rejects excess rather than concealing it.
+
+Rechecking all 102 local references found no failures. Maximum substep torque ratio
+was 0.9270, versus the former interval-mean maximum 0.8926; maximum exported reference
+ratio was 0.7199. Existing files and their historical metadata were not rewritten.
+Re-run validation to obtain current metrics; absence of the substep-check marker
+means saved replay metadata predates this guarantee.
+
+Reference loading now requires at least one interval, time starting at zero with
+uniform 20 ms increments (absolute tolerance 1e-9 s), and unit base quaternions in
+both `qpos` and `pelvis_quat` that agree up to sign (1e-6 tolerance). Dataset generation
+rejects any nonempty output directory before model loading or writes, preserving
+old runs. No resume/overwrite mode has been added.

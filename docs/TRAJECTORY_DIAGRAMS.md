@@ -56,7 +56,7 @@ flowchart LR
     NPZ --> VAL
     NPZ --> VIEW
     MJ --> VAL
-    VAL -- "inverse dynamics passes; replay recorded" --> DATA
+    VAL -- "inverse dynamics and torque limits pass" --> DATA
     DATA --> POLICY
 
     classDef amber fill:#f6dfa4,stroke:#8a5a00,color:#2b1d00
@@ -239,9 +239,9 @@ flowchart LR
     US["us: model torques"] --> TAU["tau = us + b · ½(qd[k] + qd[k+1])<br/>b = MuJoCo dof_damping"]
     FORCES["contact forces<br/>from contact data"] --> WR["foot_wrench_left/right"]
     XS --> KP["forward kinematics →<br/>com, pelvis_*, foot_pos_*, hand_pos_*"]
-    QPOS & TAU & WR & KP --> V["contract.validate<br/>shapes and finiteness"]
+    QPOS & TAU & WR & KP --> V["contract.validate<br/>shapes, finiteness,<br/>positive length, timing, quaternions"]
     V --> F["filter.check_solution"]
-    F --> F1["raw optimizer torque ratio <= 1"]
+    F --> F1["raw and exported torque ratios <= 1"]
     F --> F2["joint margin > 0.02 rad"]
     F --> F3["fz > 0 N, friction use <= 0.9,<br/>CoP inside sole - 5 mm"]
     F --> F4["foot drift < 3 mm / 3 mrad"]
@@ -331,7 +331,8 @@ sequenceDiagram
 with feedforward, while the same gains and targets without feedforward fall. This
 measures the contribution of feedforward in this controller; it does not establish
 universal failure of PD control or reproduce a learned-policy ablation. Feedforward
-bypasses actuator clipping, and the logged effort ratio uses interval means.
+bypasses actuator clipping, but total drive torque is now checked at every physics
+substep and violations fail validation. The interval-mean ratio is retained separately.
 
 ---
 
@@ -350,8 +351,10 @@ stateDiagram-v2
     IDCheck: check_inverse_dynamics
     IDCheck --> Reject_id: residual too large
     IDCheck --> Replay: ok
-    Replay: check_replay (recorded, not gated)
-    Replay --> Save
+    Replay: check_replay (torque limits gate; tracking recorded)
+    Replay --> Reject_effort: torque limit exceeded
+    Reject_effort --> Sample
+    Replay --> Save: effort ok
     Save: squat_NNNN.npz with meta.replay_ff
     Save --> Sample: accepted < n
     Save --> Split: accepted == n

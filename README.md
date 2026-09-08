@@ -133,6 +133,10 @@ metrics; see [the comparison guide](docs/TRACKING_ENV.md#compare-the-validation-
 Add `--equations` for optimizer cost components, dynamics balance and sole-motion
 plots, plus CLI values during the run. See [the equation guide](docs/TRACKING_EQUATIONS.md).
 
+Simulator settings, nominal gains/damping, and the stabilized controller preset
+are explicit in [the shared configuration](configs/g1_reconcile.yaml). New runs
+record their actual settings; see [reproducibility notes](docs/TRACKING_ENV.md#reproducible-simulation-settings).
+
 ## Generate a dataset
 
 ```bash

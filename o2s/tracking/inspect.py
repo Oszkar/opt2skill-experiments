@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from o2s.reference import contract
-from o2s.reference.validate import replay_gains
+from o2s.models.simulation import replay_gains, snapshot
 from o2s.tracking.env import TrackingEnv
 
 
@@ -25,9 +25,9 @@ def run_episode(env: TrackingEnv, controller: str = "reference", *, view: bool =
     if controller not in CONTROLLERS:
         raise ValueError(f"controller must be one of {CONTROLLERS}")
     stabilized = controller.startswith("stabilized-")
-    with replay_gains(env.model, 4., 400.) if stabilized else nullcontext():
+    with replay_gains(env.model, cfg=env.cfg) if stabilized else nullcontext():
         obs, initial = env.reset()
-        initial.update(observation=obs, kp=env.model.actuator_gainprm[:, 0].tolist(),
+        initial.update(observation=obs, simulation=snapshot(env.model, env.cfg), kp=env.model.actuator_gainprm[:, 0].tolist(),
                        kd=(-env.model.actuator_biasprm[:, 2]).tolist())
         if view:
             import mujoco.viewer
@@ -113,7 +113,8 @@ def write_outputs(out: Path, env: TrackingEnv, initial: dict, records: list[dict
         "clipped_target_count": int(arrays["target_clipped"].sum()),
         "control_dt": contract.DT, "physics_dt": env.model.opt.timestep,
         "action_units": "radian offsets from home; clipped to joint/control ranges",
-        "gains": "4x stiffness; ankle pitch 400" if controller.startswith("stabilized-") else "unmodified model gains",
+        "gains": env.cfg["controllers"]["stabilized"] if controller.startswith("stabilized-") else "configured position gains",
+        "simulation": initial["simulation"],
         "feedforward": controller == "stabilized-ff",
         "target_node": "k+1" if controller.startswith("stabilized-") else ("k" if controller == "reference" else "home"),
         "kp": initial["kp"], "kd": initial["kd"],

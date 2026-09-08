@@ -30,8 +30,9 @@ The top-left plot shows **planned** objective contributions at each reference
 interval: CoM tracking, posture/velocity regularization, torque regularization,
 joint-limit barriers and each foot's wrench barrier. Running contributions include
 20 ms integration and Crocoddyl's quadratic factor of 1/2. The top-right plot
-separately shows terminal contributions. Axes use symmetric-log scaling so a large
-term does not hide small terms or zeros. These are weighted costs, not physical
+separately shows terminal contributions. Running costs use symmetric-log scaling so a large term does not hide small
+terms or zeros. The terminal axis uses linear scaling for small costs and
+symmetric-log scaling when a contribution is at least 1. These are weighted costs, not physical
 units or the tracking environment's rewards.
 
 The CoM panel shows three distinct quantities: the requested task profile,
@@ -49,12 +50,13 @@ or inspection rejects the mismatch. Without a saved solver total there is no
 independent total check. This is a reconstruction under the current model/code,
 not a serialized history of the optimizer's internal iterations.
 
-**Current implementation detail:** the terminal node retains foot-wrench barriers
-but evaluates zero terminal wrenches. Each foot therefore contributes 2,000 with
-default weights because of the minimum-normal-force bound. This accounts for
-4,000 of the shallow reference's total cost of about 4,011.555. The plot exposes
-this artifact; it does not mean the robot lands badly or spends 4,000 units of
-energy. This observability change preserves the optimizer's behavior.
+**Objective versions:** new references use version 2, which omits terminal
+foot-wrench barriers because terminal evaluation has no wrench control. Version 1
+(or a missing version field) retains the original behavior: zero terminal wrenches
+incur 2,000 per foot with default weights. The inspector labels that legacy
+artifact rather than changing the saved cost. Regenerating the shallow reference
+changes its cost from about 4011.555 to 11.555. The cost is a weighted objective,
+not energy; the 4,000-point decrease is removal of a constant bookkeeping penalty.
 
 The saved `optimizer_u` removes export's interval-mean damping compensation from
 `tau`; it is the torque used by the optimizer's control cost.
@@ -88,12 +90,14 @@ integration (which treats damping implicitly). Actor observations and the live
 simulation are unchanged. CLI state status is at the control-interval end;
 the equation-2b timestamp identifies the last substep start in that interval.
 
-**A nonzero residual can reflect finite solver convergence.** The current asset
-uses only three solver iterations and five line-search iterations. Some snapshots
-leave noticeable residuals; an independent check with higher iteration limits
-reduces them to numerical roundoff. We retain the configured simulation settings
-and report the residual honestly. This residual is distinct from
-`reference.validate`'s inverse-dynamics check of the optimized reference.
+**A nonzero residual can reflect finite solver convergence.** Current settings
+are explicit in `configs/g1_reconcile.yaml`: Newton, 20 iterations, 20 line-search
+iterations, tolerance 1e-10, line-search tolerance 1e-4. The shallow FF check's
+maximum base-force residual is about 0.00013 N, compared with 43.89 N under the
+historical asset defaults (3/5 iterations). Increasing the budget to 50/50 gave
+the same trajectory as 20/20 in that check. Residuals are still reported, not forced
+to zero. This is distinct from `reference.validate`'s inverse-dynamics check of
+the optimized reference.
 
 For MuJoCo's force conventions, see its
 [computation documentation](https://mujoco.readthedocs.io/en/stable/computation/index.html).

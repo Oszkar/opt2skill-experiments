@@ -243,15 +243,16 @@ stress test (see spec); repo initialised 2026-09-02.
 ## 8. Policy training design notes
 
 Trajectory generation produced a validated development squat and a 100-trajectory
-randomized dataset under `data/refs/`. These retained notes describe the proposed
-tracking environment; no policy-training implementation or `rl` extra exists yet.
+randomized dataset under `data/refs/`. A single-reference tracking environment and equation inspector are now implemented.
+These retained notes describe the proposed training adapter; no policy-training
+implementation or `rl` extra exists yet.
 
 - **Dataset**: `data/refs/squat/squat_*.npz` (100 files, contract in `o2s/reference/contract.py`),
   plus `data/refs/squat/split.json` (train/val/test = 70/10/20, names only) and
   `data/refs/squat/summary.json` / `rejected.jsonl`. Load a directory with
   `contract.load_dir(dir_path, names=None)`, which returns a `ReferenceSet` of padded arrays and
-  a per-trajectory length vector (JAX needs rectangular data); `contract.load_dir`, not
-  `contract.load` (single file), is the loader the tracking env should use.
+  a per-trajectory length vector (JAX needs rectangular data); `contract.load_dir` is intended for a future multi-reference training adapter.
+  The current single-reference inspector uses `contract.load`.
 - **Reference contract's timing rule**: at control step k the policy observes state k and
   reference k, acts over `[t[k], t[k+1])`. The torque reward compares the substep-mean
   `qfrc_actuator[6:]` over that interval with `tau[k]` (the TO's zero-order hold). Episode has N
@@ -322,7 +323,9 @@ replays resets the initial state and advances 1,700 physics steps for a default
 replay does not overwrite the state with the reference after every step. The
 headless run has no real-time pacing, so several seconds of simulation can finish
 in much less wall-clock time. Feedforward is applied through external generalized
-forces and bypasses actuator clipping; reported effort uses interval means.
+forces and bypasses actuator clipping. Acceptance checks total feedforward-plus-actuator
+torque at every physics substep; interval-mean effort remains a separate diagnostic.
+The mean torque is still used for torque-tracking comparisons, not peak-limit checks.
 
 ### 9.2 Initial condition, initial guess, and the search space
 
@@ -484,3 +487,33 @@ uniform 20 ms increments (absolute tolerance 1e-9 s), and unit base quaternions 
 both `qpos` and `pelvis_quat` that agree up to sign (1e-6 tolerance). Dataset generation
 rejects any nonempty output directory before model loading or writes, preserving
 old runs. No resume/overwrite mode has been added.
+
+
+### Numerical and configuration cleanup (2026-09-08)
+
+Current behavior supersedes historical costs and replay settings above:
+
+- The optimizer now omits terminal foot-wrench barriers: terminal evaluation has no
+  wrench control. Their old zero-wrench placeholders contributed a constant 4,000.
+  The regenerated 15 cm squat has objective cost 11.555 rather than 4011.555.
+  New references store `objective_version: 2`; equation inspection still reconstructs
+  version-1 references with their original terminal penalty.
+- `configs/g1_reconcile.yaml` now specifies simulator settings, nominal actuator kp/kd,
+  passive joint damping, and the stabilized replay preset. Nominal actuator kd is zero;
+  damping comes from the joint's passive damping. Stabilized replay still uses 4x kp
+  and ankle pitch 400 N m/rad, without multiplying passive damping.
+- Euler physics stays at 2 ms. Newton now uses up to 20 iterations and 20 line-search
+  iterations, tolerance 1e-10 and line-search tolerance 1e-4. In the shallow FF check,
+  maximum base-force balance residual fell from 43.89 N to about 0.00013 N. A 50/50
+  check gave the same trajectory as 20/20. This is a convergence check on this task,
+  not a universal solver guarantee.
+- The regenerated shallow reference passes validation: maximum FF pelvis error about
+  7.69 mm and maximum total substep effort ratio 0.3198. The interval-mean ratio is
+  0.2572. Historical 0.2543 and 0.3155 values used earlier settings/metrics.
+- New reference metadata and inspection summaries record actual physics settings,
+  actuator kp/kd, passive damping, joint friction loss, and a configuration hash.
+  Saved references are not silently rewritten when configuration changes; replay
+  uses the current configuration and records it. Old run folders remain historical.
+
+See [the equation guide](docs/TRACKING_EQUATIONS.md) and
+[tracking configuration notes](docs/TRACKING_ENV.md#reproducible-simulation-settings).

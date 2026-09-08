@@ -212,6 +212,8 @@ def test_equations_preserve_simulation_and_export(reference_path, tmp_path, caps
     np.testing.assert_array_equal([r["substep_total_torque"] for r in records],
                                   [r["substep_total_torque"] for r in expected])
     obj = observed.equations.objective
+    assert obj["version"] == 2
+    assert all(value == 0 for name, value in zip(obj["names"], obj["terminal"]) if name.endswith("_wrench"))
     assert obj["total"] == pytest.approx(observed.meta["solver"]["cost"], rel=1e-10)
     np.testing.assert_allclose(obj["raw_u"] + observed.model.dof_damping[6:] * .5 *
                                (observed.ref["qvel"][:-1, 6:] + observed.ref["qvel"][1:, 6:]), observed.ref["tau"])
@@ -264,3 +266,16 @@ def test_equation_cost_rejects_incompatible_provenance(reference_path):
     meta = dict(env.meta, weights={**env.meta["weights"], "control_reg": 100})
     with pytest.raises(ValueError, match="differs from saved cost"):
         objective_components(env.ref, meta, env.model, env.cfg)
+
+
+
+def test_legacy_objective_reconstruction_remains_available(reference_path):
+    from o2s.trajopt.diagnostics import objective_components
+    env = TrackingEnv(reference_path)
+    meta = dict(env.meta)
+    meta.pop("objective_version")
+    meta["solver"] = {**meta["solver"], "cost": meta["solver"]["cost"] + 4000}
+    old = objective_components(env.ref, meta, env.model, env.cfg)
+    assert old["version"] == 1
+    assert old["total"] == pytest.approx(meta["solver"]["cost"])
+    assert sum(value for name, value in zip(old["names"], old["terminal"]) if name.endswith("_wrench")) == 4000

@@ -47,6 +47,7 @@ class SquatSolution:
     solve_time: float
     com_ref: np.ndarray
     weights: SquatWeights = field(default_factory=SquatWeights)
+    simulation: dict = field(default_factory=dict)
 
 
 def armature_vector(mj_model: mujoco.MjModel) -> np.ndarray:
@@ -80,7 +81,7 @@ def _state_weights(cfg: dict, w: SquatWeights, terminal: bool) -> np.ndarray:
     return np.concatenate([np.zeros(3), np.full(3, w.base_rotation), joint_w, np.full(6 + nj, vel_w)])
 
 
-def _node_model(pin_model, state, actuation, x0, com_target, sole_placements, cfg, w, effort, armature, dt, terminal):
+def _node_model(pin_model, state, actuation, x0, com_target, sole_placements, cfg, w, effort, armature, dt, terminal, terminal_wrench_cost=False):
     nu = actuation.nu
     contacts = croc.ContactModelMultiple(state, nu)
     costs = croc.CostModelSum(state, nu)
@@ -95,7 +96,10 @@ def _node_model(pin_model, state, actuation, x0, com_target, sole_placements, cf
         cone = croc.WrenchCone(np.eye(3), mu, box, 4, True, w.min_normal_force, w.max_normal_force)
         residual = croc.ResidualModelContactWrenchCone(state, fid, cone, nu, True)
         activation = croc.ActivationModelQuadraticBarrier(croc.ActivationBounds(cone.lb, cone.ub))
-        costs.addCost(f"{name}_wrench", croc.CostModelResidual(state, activation, residual), w.wrench_cone)
+        # No terminal control/contact wrench is evaluated. A wrench barrier here
+        # would penalize a zero placeholder, adding a constant 4000 at default weights.
+        if not terminal or terminal_wrench_cost:  # legacy objective reconstruction only
+            costs.addCost(f"{name}_wrench", croc.CostModelResidual(state, activation, residual), w.wrench_cone)
 
     costs.addCost("com", croc.CostModelResidual(state, croc.ResidualModelCoMPosition(state, com_target, nu)), w.com)
 
@@ -170,8 +174,9 @@ def solve_squat(pin_model, mj_model, cfg, params: SquatParams, weights: SquatWei
             f = cd[f"{name}_contact"].f
             forces[side][k, :3] = f.linear
             forces[side][k, 3:] = f.angular
+    from o2s.models.simulation import snapshot
     return SquatSolution(
         params=params, dt=params.dt, xs=np.array(solver.xs), us=np.array(solver.us), forces=forces,
         converged=bool(converged), iters=int(solver.iter), cost=float(solver.cost), solve_time=solve_time,
-        com_ref=com_ref, weights=w,
+        com_ref=com_ref, weights=w, simulation=snapshot(mj_model, cfg),
     )

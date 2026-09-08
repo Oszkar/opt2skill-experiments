@@ -61,7 +61,7 @@ closes at episode end; closing it early saves a partial run as `viewer_closed`.
 A graphical desktop is required (WSLg on WSL2); on macOS use `mjpython` instead of
 `python` for `--view`. The six-panel PNG is an after-run plot, not a live dashboard.
 
-On the saved 15 cm shallow squat, stabilized PD fell at 2.22 s (maximum pelvis
+Before the numerical cleanup, on the saved 15 cm shallow squat, stabilized PD fell at 2.22 s (maximum pelvis
 position error 0.5575 m, peak effort ratio 0.4497). With feedforward it completed
 all 3.40 s (maximum pelvis error 0.00769 m, peak effort ratio 0.3155). Neither run
 saturated the PD actuators or exceeded total effort limits. The PD trace ends at
@@ -76,7 +76,7 @@ validated replay baseline, not a learned policy.
 
 For paper-equation costs, force balance and contact-motion plots, add
 `--equations`. See [Watching the equations](TRACKING_EQUATIONS.md) for the
-CLI readouts, units, solver residuals and current terminal-cost artifact.
+CLI readouts, units, solver residuals and legacy terminal-cost interpretation.
 
 ## The interface
 
@@ -194,3 +194,36 @@ substep timestamps, reference alignment, reward values, real actuator saturation
 contact logging, malformed actions, fall/end handling, and trace export. The next
 step is choosing the learning adapter and training one policy on one reference;
 dataset sampling and torque-informed comparisons can follow a working baseline.
+
+
+## Reproducible simulation settings
+
+`configs/g1_reconcile.yaml` is the common source for model loading, validation,
+reference viewing, and tracking inspection:
+
+| Setting | Current value |
+|---|---|
+| Physics step / integrator | 2 ms / Euler |
+| Contact solver / cone | Newton / pyramidal |
+| Solver / line-search iteration limits | 20 / 20 |
+| Solver / line-search tolerance | 1e-10 / 1e-4 |
+| Nominal position gains | Explicit per-joint kp array; actuator kd = 0 |
+| Passive joint damping | Explicit per-joint array, separate from actuator kd |
+| Stabilized preset | 4x nominal kp, ankle pitch kp = 400; other damping unchanged |
+
+The control/reference step remains 20 ms (ten physics substeps). Reference and
+hold controllers use nominal gains; both stabilized modes use the same preset.
+The reference viewer's `--kp-scale` and `--ankle-pitch-kp` flags are explicit
+per-run overrides; without them it uses the shared preset.
+
+New reference metadata stores the nominal loaded simulation configuration and
+`objective_version: 2`. Inspection `summary.json` stores the **actual** settings
+used in that episode, including stabilized gains, before temporary gains are
+restored. Both include a configuration hash. Asset versions remain pinned; full
+reproduction also requires matching code and dependency versions. References
+record their origin; loading a reference does not overwrite current simulator
+settings from historical metadata.
+
+The regenerated shallow squat completes FF replay with maximum pelvis error
+about 7.69 mm and peak total substep effort ratio 0.3198. Historical runs above
+used the earlier solver budget. Use new output folders to compare configurations.

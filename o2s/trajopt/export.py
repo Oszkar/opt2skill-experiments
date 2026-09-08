@@ -56,6 +56,8 @@ def solution_to_reference(sol, pin_model: pin.Model, mj_model, cfg: dict) -> dic
 def solution_meta(sol, filter_result, cfg: dict) -> dict:
     p = sol.params
     return {
+        "objective_version": 2,
+        "simulation": sol.simulation,
         "weights": asdict(sol.weights),
         "depth": p.depth, "t_stand0": p.t_stand0, "t_down": p.t_down, "t_hold": p.t_hold, "t_up": p.t_up,
         "t_stand1": p.t_stand1, "com_shift_x": p.com_shift_x, "dt": p.dt,

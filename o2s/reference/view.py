@@ -39,8 +39,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("path", type=Path, nargs="?", default=Path("data/refs/dev/squat_dev.npz"))
     ap.add_argument("--mode", choices=["kinematic", "replay"], default="kinematic")
-    ap.add_argument("--kp-scale", type=float, default=4.0)
-    ap.add_argument("--ankle-pitch-kp", type=float, default=400.0)
+    ap.add_argument("--kp-scale", type=float, default=None, help="override configured stabilized kp scale")
+    ap.add_argument("--ankle-pitch-kp", type=float, default=None, help="override configured ankle-pitch kp")
     ap.add_argument("--loop", action="store_true")
     args = ap.parse_args()
 
@@ -61,7 +61,7 @@ def main() -> int:
                     data.qvel[:] = ref["qvel"][k]
                     mujoco.mj_forward(model, data)
                 else:
-                    with validate.replay_gains(model, args.kp_scale, args.ankle_pitch_kp):
+                    with validate.replay_gains(model, args.kp_scale, args.ankle_pitch_kp, cfg=cfg):
                         validate.step_interval(model, data, ref["tau"][k], ref["qpos"][k + 1, 7:])
                 # Replay has advanced to state k+1; kinematic mode displays state k.
                 state_index = k if args.mode == "kinematic" else k + 1

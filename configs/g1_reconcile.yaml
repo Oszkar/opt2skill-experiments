@@ -80,5 +80,33 @@ frames:
 
 contact:
   # TO planning margin; MuJoCo's foot/floor sliding friction in the Playground scene is 1.0 and
-  # plan 2 randomizes U[0.3, 1.0]
+  # future training may randomize friction; no randomization is implemented yet
   friction_mu: 0.6
+
+
+# Applied by every MuJoCo model loader, independent of upstream XML defaults.
+simulation:
+  timestep: 0.002
+  integrator: Euler
+  solver: Newton
+  cone: pyramidal
+  iterations: 20
+  ls_iterations: 20
+  tolerance: 1.0e-10
+  ls_tolerance: 1.0e-4
+  noslip_iterations: 0
+  impratio: 1.0
+  gravity: [0.0, 0.0, -9.81]
+
+controllers:
+  # Joint order is `joints` above. Damping is passive joint damping, NOT actuator kd.
+  position:
+    kp: [75, 75, 75, 75, 20, 2, 75, 75, 75, 75, 20, 2, 75, 75, 75,
+         75, 75, 75, 75, 2, 2, 2, 75, 75, 75, 75, 2, 2, 2]
+    kd: 0.0
+    joint_damping: [2, 2, 2, 2, 1, 0.2, 2, 2, 2, 2, 1, 0.2, 2, 2, 2,
+                    2, 2, 2, 2, 0.2, 0.2, 0.2, 2, 2, 2, 2, 0.2, 0.2, 0.2]
+  # Same targets and gains for stabilized-pd / stabilized-ff; only FF differs.
+  stabilized:
+    kp_scale: 4.0
+    ankle_pitch_kp: 400.0

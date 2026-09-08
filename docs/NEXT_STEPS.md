@@ -44,14 +44,11 @@ Walking, changing contacts, uneven terrain, manipulation, and hardware deploymen
 need additional modeling and validation. Flat-foot squat results do not establish
 those capabilities.
 
-## Clarify numerical diagnostics
+## Numerical baseline
 
-The [equation inspector](TRACKING_EQUATIONS.md) exposes two implementation details
-to assess before interpreting cost or simulation residuals as paper-level metrics:
-
-- Terminal foot-wrench barriers contribute a constant 4,000 under default weights
-  because terminal evaluation uses zero wrenches. Consider removing those terminal
-  barriers and regenerate/revalidate references if the objective changes.
-- The current MuJoCo asset uses a small contact-solver iteration budget. Evaluate
-  the effect of tighter convergence on balance residuals and replay, keeping that
-  change separate from instrumentation so comparisons remain meaningful.
+The terminal-wrench cost artifact is removed for new references, and simulator
+settings and controller gains are explicit in `configs/g1_reconcile.yaml`.
+The shallow squat was regenerated and validated; legacy references retain their
+original objective version. [Equation diagnostics](TRACKING_EQUATIONS.md) expose
+remaining solver residuals. Recheck numerical convergence when changing contact
+models or tasks; the squat calibration is not a guarantee for other motions.

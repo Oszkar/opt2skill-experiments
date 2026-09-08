@@ -94,7 +94,8 @@ def write_equations(out, env, records, controller):
                     cost_convention="Planned trajectory only; running weighted costs include dt and quadratic 1/2; terminal separate",
                     solver_iterations=env.model.opt.iterations, solver_linesearch_iterations=env.model.opt.ls_iterations,
                     residual_note="Finite solver convergence can leave a nonzero balance residual; this is not the reference inverse-dynamics validation residual",
-                    terminal_note="Current terminal contact costs evaluate zero wrenches and penalize minimum normal force; default weights contribute 2000 per foot even at standing",
+                    objective_version=objective["version"],
+                    terminal_note="Legacy terminal wrench penalties included" if objective["version"] == 1 else "Terminal wrench penalties excluded; no terminal wrench control exists",
                     sampling="Independent continuous forward dynamics at substep start; no mutation of live data",
                     dynamics="M a + C = drive + contact + passive + other_constraint; all 35 generalized coordinates",
                     contact="All simulated contacts; other_constraint includes friction loss and joint limits",
@@ -117,10 +118,15 @@ def write_equations(out, env, records, controller):
     ax = axes[0, 1]
     ax.barh(objective["names"], objective["terminal"])
     ax.set_title(f"2a: terminal contributions at {env.ref['t'][-1]:.2f}s (planned)")
-    ax.set_xlabel("Weighted terminal cost (symlog scale)")
-    ax.text(.02, .02, "Terminal wrench penalties are an implementation artifact:\nzero terminal wrenches vs minimum normal force.",
+    terminal_log = np.max(objective["terminal"]) >= 1
+    ax.set_xlabel("Weighted terminal cost" + (" (symlog scale)" if terminal_log else ""))
+    ax.text(.02, .02, ("Legacy terminal wrench artifact:\nzero terminal wrenches vs minimum normal force."
+                      if objective["version"] == 1 else "Terminal state/CoM costs only; no terminal wrench penalty."),
             transform=ax.transAxes, fontsize=8, va="bottom", bbox=dict(facecolor="white", alpha=.85, edgecolor="none"))
-    ax.set_xscale("symlog", linthresh=.01)
+    if terminal_log:
+        ax.set_xscale("symlog", linthresh=.01)
+    else:
+        ax.ticklabel_format(axis="x", style="sci", scilimits=(-3, 3))
     for ax, idx, label, unit in ((axes[1, 0], 2, "floating base vertical", "N"),
                                 (axes[1, 1], 6 + env.cfg["joints"].index("left_knee_joint"), "left knee", "N m")):
         for key, name in (("inertia", "M a"), ("bias", "C"), ("drive", "B u (PD + FF)"),

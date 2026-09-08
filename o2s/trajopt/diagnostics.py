@@ -16,6 +16,9 @@ def objective_components(ref, meta, mj_model, cfg):
         raise ValueError("equation cost diagnostics require a squat reference with task metadata")
     params = SquatParams(**{f.name: meta[f.name] for f in fields(SquatParams) if f.name in meta})
     weights = SquatWeights(**meta.get("weights", {}))
+    version = meta.get("objective_version", 1)
+    if version not in (1, 2):
+        raise ValueError(f"unsupported objective_version {version}")
     p = g1.load_pin_model(cfg)
     x0 = standing_state(p, mj_model)
     data = p.createData()
@@ -34,7 +37,7 @@ def objective_components(ref, meta, mj_model, cfg):
     for k in range(n + 1):
         terminal = k == n
         node = _node_model(p, state, actuation, x0, target[k], soles, cfg, weights,
-                           g1.effort_limits(cfg), armature_vector(mj_model), params.dt, terminal)
+                           g1.effort_limits(cfg), armature_vector(mj_model), params.dt, terminal, terminal_wrench_cost=version == 1)
         nd = node.createData()
         q, v = convert.mj_to_pin(ref["qpos"][k], ref["qvel"][k])
         x = np.concatenate([q, v])
@@ -55,4 +58,4 @@ def objective_components(ref, meta, mj_model, cfg):
     return dict(names=names, running=values[:-1], terminal=values[-1], total=total,
                 target_com=target, raw_u=raw_u,
                 provenance="saved weights" if "weights" in meta else "legacy reference: default weights assumed",
-                saved_cost=saved_cost)
+                saved_cost=saved_cost, version=version)

@@ -30,6 +30,7 @@ import mujoco
 import numpy as np
 
 from o2s.models import g1
+from o2s.models.simulation import replay_gains, replay_parameters, snapshot
 from o2s.reference import contract
 
 SUBSTEPS = 10               # 20 ms control interval / 2 ms physics step
@@ -72,22 +73,6 @@ def disabled(model: mujoco.MjModel, *flags: int):
         yield
     finally:
         model.opt.disableflags = saved
-
-
-@contextmanager
-def replay_gains(model: mujoco.MjModel, kp_scale: float, ankle_pitch_kp: float):
-    gain = model.actuator_gainprm.copy()
-    bias = model.actuator_biasprm.copy()
-    kp = model.actuator_gainprm[:, 0] * kp_scale
-    for name in ("left_ankle_pitch_joint", "right_ankle_pitch_joint"):
-        kp[model.actuator(name).id] = ankle_pitch_kp
-    model.actuator_gainprm[:, 0] = kp
-    model.actuator_biasprm[:, 1] = -kp   # MuJoCo position actuator: force = kp * (ctrl - q) - kv * qdot
-    try:
-        yield
-    finally:
-        model.actuator_gainprm[:] = gain
-        model.actuator_biasprm[:] = bias
 
 
 def step_interval(model: mujoco.MjModel, data: mujoco.MjData, tau: np.ndarray, ctrl: np.ndarray | None, *, substep_torques: np.ndarray | None = None) -> np.ndarray:
@@ -170,7 +155,8 @@ def check_inverse_dynamics(model: mujoco.MjModel, ref: dict, cfg: dict) -> Check
     return CheckReport("inverse_dynamics", ok, metrics, msg)
 
 
-def check_replay(model: mujoco.MjModel, ref: dict, cfg: dict, feedforward: bool = True, kp_scale: float = 4.0, ankle_pitch_kp: float = 400.0) -> CheckReport:
+def check_replay(model: mujoco.MjModel, ref: dict, cfg: dict, feedforward: bool = True, kp_scale: float | None = None, ankle_pitch_kp: float | None = None) -> CheckReport:
+    kp_scale, ankle_pitch_kp = replay_parameters(cfg, kp_scale, ankle_pitch_kp)
     data = mujoco.MjData(model)
     N = contract.validate(ref)
     dt = contract.DT  # validated time grid may contain harmless serialization roundoff
@@ -248,6 +234,7 @@ def main(argv: list[str]) -> int:
     model = g1.load_mj_model(cfg)
     ref, meta = contract.load(path)
     print(f"{path}: N={ref['tau'].shape[0]} depth={meta.get('depth')}")
+    print(f"[config] physics={snapshot(model, cfg)['physics']}; stabilized={cfg['controllers']['stabilized']}")
     reports = run_all(model, ref, cfg)
     for r in reports:
         tag = "info" if r.name == "replay_pd_only" else ("ok" if r.ok else "FAIL")

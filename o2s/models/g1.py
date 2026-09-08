@@ -71,6 +71,8 @@ def load_mj_model(cfg: dict | None = None) -> mujoco.MjModel:
     for jname, (lo, hi) in cfg.get("joint_range_overrides", {}).items():
         model.jnt_range[model.joint(jname).id] = (lo, hi)
         model.actuator_ctrlrange[model.actuator(jname).id] = (lo, hi)  # position actuators inherit the joint range
+    from o2s.models.simulation import apply_config
+    apply_config(model, cfg)
     return model
 
 

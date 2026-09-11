@@ -134,6 +134,8 @@ def _node_model(pin_model, state, actuation, x0, com_target, sole_placements, cf
 
 
 def solve_squat(pin_model, mj_model, cfg, params: SquatParams, weights: SquatWeights | None = None, max_iter: int = 300, verbose: bool = False) -> SquatSolution:
+    if isinstance(max_iter, bool) or not isinstance(max_iter, (int, np.integer)) or max_iter <= 0:
+        raise ValueError("max_iter must be a positive integer")
     w = weights or SquatWeights()
     x0 = standing_state(pin_model, mj_model)
     data = pin_model.createData()

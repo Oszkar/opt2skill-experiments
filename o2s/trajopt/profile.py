@@ -1,12 +1,15 @@
 """Squat task parameters and the smooth CoM reference profile the optimizer tracks."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from numbers import Real
 
 import numpy as np
 
+from o2s.reference.contract import DT
 
-@dataclass
+
+@dataclass(frozen=True)
 class SquatParams:
     depth: float                 # crouch depth in metres (CoM drop)
     t_stand0: float = 0.5        # standing before the squat
@@ -15,13 +18,30 @@ class SquatParams:
     t_up: float = 1.0
     t_stand1: float = 0.5        # standing after the squat
     com_shift_x: float = 0.0     # fore-aft CoM shift at the bottom (m)
-    dt: float = 0.02
+    dt: float = DT
+
+    def __post_init__(self) -> None:
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if isinstance(value, bool) or not isinstance(value, Real) or not np.isfinite(value):
+                raise ValueError(f"{field.name} must be finite and numeric")
+        for key in ("depth", "t_stand0", "t_hold", "t_stand1"):
+            if getattr(self, key) < 0:
+                raise ValueError(f"{key} must be nonnegative")
+        for key in ("t_down", "t_up"):
+            if getattr(self, key) <= 0:
+                raise ValueError(f"{key} must be positive")
+        if self.dt != DT:
+            raise ValueError(f"dt must be {DT} seconds (the reference contract interval)")
+        if not np.isfinite(self.total_time / self.dt) or self.num_nodes() < 1:
+            raise ValueError("total duration must produce at least one finite control interval")
 
     @property
     def total_time(self) -> float:
         return self.t_stand0 + self.t_down + self.t_hold + self.t_up + self.t_stand1
 
     def num_nodes(self) -> int:
+        """Round the sampled total duration to the nearest 20 ms grid interval."""
         return int(round(self.total_time / self.dt))
 
 

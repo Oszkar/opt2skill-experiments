@@ -8,15 +8,18 @@ execution are not. See the [hands-on guide](TRAJECTORY_GUIDE.md) to use what exi
 ## Make reference data a reliable training input
 
 Implemented safeguards now reject nonempty output directories, enforce positive
-reference lengths and valid 20 ms timing/unit quaternions, and gate exported plus
-per-physics-substep replay torque limits. Remaining work:
+reference lengths, valid 20 ms timing, consistent duplicate base states and
+metadata, and gate exported plus per-physics-substep replay torque limits. Squat
+parameters are checked before solving. A tested dependency lock and full dataset
+provenance/file manifests are implemented; see [reproducibility](REPRODUCIBILITY.md).
+Remaining work:
 
-1. Validate squat parameters before solving, and check metadata consistency and
-   padding-mask use at the future training boundary.
+1. Verify manifests, enforce split selection, and respect padding masks at the
+   future training boundary. Require an explicit policy for legacy/missing provenance.
 2. Decide whether replay tracking failures should also gate training data; they
    remain informational during generation, unlike torque violations.
-3. Capture a reproducible dependency lock and dataset provenance, including code,
-   config, solver weights, and library versions. Asset commits are already pinned.
+3. Keep the eventual training dependency lock separate from trajectory optimization
+   and revalidate the numerical baseline when either environment changes.
 
 ## Build a tracking policy
 

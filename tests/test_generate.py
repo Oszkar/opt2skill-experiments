@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from o2s.reference import contract
+from o2s.provenance import verify_dataset
 from o2s.trajopt import generate
 from tests.conftest import requires_assets
 
@@ -76,6 +77,13 @@ def test_main_accepts_one_trajectory_and_records_full_replay_metrics(tmp_path, m
     assert "replay_ff_pass_rate" in summary
 
     _, meta = contract.load(npz_files[0])
+    manifest = verify_dataset(tmp_path)
+    assert manifest["generation"]["seed"] == 1
+    assert manifest["generation"]["weights"] == meta["weights"]
+    assert manifest["provenance"] == meta["provenance"]
+    assert meta["provenance"]["config_sha256"] == meta["simulation"]["config_sha256"]
+    assert meta["provenance"]["packages"]["crocoddyl"] == "3.2.1"
+    assert meta["provenance"]["dependency_lock"]["sha256"]
     assert meta["replay_ff"]["ok"] is True
     # the full check_replay metrics dict is stored, not just the three original fields
     for key in ("max_pelvis_error", "completed", "rms_joint_error", "peak_effort_ratio", "pd_over_ref_legs"):
@@ -116,6 +124,8 @@ def test_rejects_replay_effort_violation_before_saving(tmp_path, monkeypatch):
     assert not list((tmp_path / "new").glob("*.npz"))
     record = json.loads((tmp_path / "new" / "rejected.jsonl").read_text())
     assert record["stage"] == "replay_effort"
+    with pytest.raises(ValueError, match="incomplete"):
+        verify_dataset(tmp_path / "new")
 
 
 

@@ -25,10 +25,15 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="write even if the filter fails")
     args = ap.parse_args()
 
+    try:
+        params = SquatParams(depth=args.depth, t_down=args.t_down, t_hold=args.t_hold, t_up=args.t_up, com_shift_x=args.com_shift_x)
+        if args.max_iter <= 0:
+            raise ValueError("--max-iter must be positive")
+    except ValueError as exc:
+        ap.error(str(exc))
     cfg = g1.load_config()
     mj_model = g1.load_mj_model(cfg)
     pin_model = g1.load_pin_model(cfg)
-    params = SquatParams(depth=args.depth, t_down=args.t_down, t_hold=args.t_hold, t_up=args.t_up, com_shift_x=args.com_shift_x)
     sol = solve_squat(pin_model, mj_model, cfg, params, max_iter=args.max_iter, verbose=args.verbose)
     print(f"converged={sol.converged} iters={sol.iters} cost={sol.cost:.3f} time={sol.solve_time:.2f}s N={sol.us.shape[0]}")
     ref = export.solution_to_reference(sol, pin_model, mj_model, cfg)

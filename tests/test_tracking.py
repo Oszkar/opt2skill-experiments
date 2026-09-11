@@ -100,10 +100,11 @@ def test_invalid_action_does_not_advance(env, action):
 
 
 def test_terminal_state_has_no_torque_indexing(reference_path, tmp_path):
-    ref, meta = contract.load(reference_path)
+    ref, _ = contract.load(reference_path)
     short = {k: v[:2 if k in contract.STATE_KEYS else 1] for k, v in ref.items()}
     path = tmp_path / "short.npz"
-    contract.save(path, short, meta)
+    # This sliced fixture is one interval, not the original complete squat.
+    contract.save(path, short, {"num_intervals": 1, "duration": contract.DT})
     env = TrackingEnv(path)
     with pytest.raises(RuntimeError, match="reset"):
         env.step(np.zeros(29))

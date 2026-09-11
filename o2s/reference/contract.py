@@ -3,6 +3,8 @@
 A trajectory has N >= 1 control intervals of DT seconds, N+1 state samples and N control samples.
 Time starts at zero with a 20 ms step (absolute tolerance 1e-9 s). Both base quaternion
 arrays must have unit norm and agree up to sign (absolute tolerance 1e-6).
+Duplicate pelvis position and velocity arrays must agree with qpos/qvel in their
+declared frames (absolute tolerance 1e-6, no relative tolerance).
   qpos (N+1, 36): MuJoCo layout, base pos world, quat wxyz, 29 joints in MuJoCo order.      time t[k]
   qvel (N+1, 35): base lin vel WORLD, base ang vel pelvis-LOCAL, 29 joint velocities.        time t[k]
   tau  (N, 29):   torque MuJoCo's actuators must output, zero-order hold over [t[k], t[k+1]).
@@ -43,10 +45,14 @@ from pathlib import Path
 
 import numpy as np
 
+from o2s.reference.convert import quat_wxyz_to_mat
+
 DT = 0.02
 NJ = 29
 TIME_ATOL = 1e-9  # seconds; serialization roundoff only
 QUAT_ATOL = 1e-6  # unit-norm and duplicate-orientation tolerance
+STATE_ATOL = 1e-6  # metres or velocity units; duplicate-field roundoff only
+WRENCH_FRAME = "world-aligned axes at sole frame origin"
 
 ARRAY_SPEC: dict[str, tuple] = {
     "t": ("N+1",),
@@ -100,12 +106,51 @@ def validate(ref: dict) -> int:
                           np.linalg.norm(base_quat + pelvis_quat, axis=1))
     if np.any(mismatch > QUAT_ATOL):
         raise ValueError("pelvis_quat: orientation differs from qpos base quaternion")
+    qpos, qvel = np.asarray(ref["qpos"]), np.asarray(ref["qvel"])
+    local_linear = np.stack([quat_wxyz_to_mat(q).T @ v
+                             for q, v in zip(base_quat, qvel[:, :3])])
+    for key, expected in (("pelvis_pos", qpos[:, :3]),
+                          ("pelvis_linvel", local_linear),
+                          ("pelvis_angvel", qvel[:, 3:6])):
+        if not np.allclose(ref[key], expected, rtol=0.0, atol=STATE_ATOL):
+            raise ValueError(f"{key}: inconsistent with qpos/qvel")
     return N
 
 
+def validate_meta(meta: dict, n: int) -> None:
+    """Check declared conventions; legacy references may omit newer metadata."""
+    if not isinstance(meta, dict):
+        raise ValueError("meta: must be a JSON object")
+    try:
+        json.dumps(meta, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("meta: must contain finite JSON values") from exc
+    for key, expected in (("dt", DT), ("num_intervals", n), ("duration", n * DT)):
+        if key in meta:
+            value = meta[key]
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not np.isclose(value, expected, rtol=0, atol=TIME_ATOL)):
+                raise ValueError(f"meta.{key}: inconsistent with reference timing")
+    if "objective_version" in meta and (type(meta["objective_version"]) is not int
+                                        or meta["objective_version"] not in (1, 2)):
+        raise ValueError("meta.objective_version: unsupported version")
+    if "torque_includes_mujoco_damping" in meta and meta["torque_includes_mujoco_damping"] is not True:
+        raise ValueError("meta.torque_includes_mujoco_damping: unsupported torque convention")
+    if "wrench_frame" in meta and meta["wrench_frame"] != WRENCH_FRAME:
+        raise ValueError("meta.wrench_frame: unsupported wrench convention")
+    duration_keys = ("t_stand0", "t_down", "t_hold", "t_up", "t_stand1")
+    if "depth" in meta and all(key in meta for key in duration_keys):
+        # Local import keeps the array-only contract usable without simulator packages.
+        from o2s.trajopt.profile import SquatParams
+        params = SquatParams(**{key: meta[key] for key in
+                               ("depth", *duration_keys, "com_shift_x", "dt") if key in meta})
+        if params.num_nodes() != n:
+            raise ValueError("meta: squat duration does not match reference length")
+
+
 def save(path: str | Path, ref: dict, meta: dict) -> None:
-    validate(ref)
-    np.savez_compressed(Path(path), meta=np.array(json.dumps(meta)), **{k: np.asarray(ref[k], dtype=np.float64) for k in ARRAY_SPEC})
+    validate_meta(meta, validate(ref))
+    np.savez_compressed(Path(path), meta=np.array(json.dumps(meta, allow_nan=False)), **{k: np.asarray(ref[k], dtype=np.float64) for k in ARRAY_SPEC})
 
 
 def load(path: str | Path) -> tuple[dict, dict]:
@@ -115,8 +160,10 @@ def load(path: str | Path) -> tuple[dict, dict]:
             k = sorted(missing)[0]
             raise ValueError(f"{path}: missing key {k}")
         ref = {k: z[k] for k in ARRAY_SPEC}
+        if "meta" not in z.files:
+            raise ValueError(f"{path}: missing key meta")
         meta = json.loads(str(z["meta"]))
-    validate(ref)
+    validate_meta(meta, validate(ref))
     return ref, meta
 
 

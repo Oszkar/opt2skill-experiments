@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from o2s.reference import contract
+from o2s.reference.convert import quat_wxyz_to_mat
 
 
 def make_ref(N: int) -> dict:
@@ -14,6 +15,10 @@ def make_ref(N: int) -> dict:
         ref[key] = rng.normal(size=(rows, *shape[1:])) if len(shape) > 1 else np.arange(rows) * contract.DT
     ref["qpos"][:, 3:7] /= np.linalg.norm(ref["qpos"][:, 3:7], axis=1, keepdims=True)
     ref["pelvis_quat"] = ref["qpos"][:, 3:7].copy()
+    ref["pelvis_pos"] = ref["qpos"][:, :3].copy()
+    ref["pelvis_angvel"] = ref["qvel"][:, 3:6].copy()
+    ref["pelvis_linvel"] = np.stack([quat_wxyz_to_mat(q).T @ v for q, v in
+                                     zip(ref["pelvis_quat"], ref["qvel"][:, :3])])
     return ref
 
 
@@ -147,3 +152,55 @@ def test_time_grid_allows_serialization_roundoff():
     ref = make_ref(2)
     ref["t"][1] += 1e-10
     assert contract.validate(ref) == 2
+
+
+@pytest.mark.parametrize("key", ["pelvis_pos", "pelvis_linvel", "pelvis_angvel"])
+def test_rejects_inconsistent_duplicate_state_on_save_and_load(tmp_path, key):
+    ref = make_ref(3)
+    ref[key][1, 0] += .01
+    path = tmp_path / "bad.npz"
+    with pytest.raises(ValueError, match=key):
+        contract.save(path, ref, {})
+    assert not path.exists()
+    np.savez(path, meta=np.array("{}"), **ref)
+    with pytest.raises(ValueError, match=key):
+        contract.load(path)
+
+
+def test_local_velocity_uses_rotated_base_and_allows_roundoff():
+    ref = make_ref(2)
+    # 90 degrees around z: world +y is pelvis-local +x.
+    ref["qpos"][:, 3:7] = [np.sqrt(.5), 0, 0, np.sqrt(.5)]
+    ref["pelvis_quat"] = -ref["qpos"][:, 3:7]
+    ref["qvel"][:, :3] = [0, 2, 0]
+    ref["pelvis_linvel"][:] = [2, 0, 0]
+    ref["pelvis_linvel"][0, 0] += 1e-8
+    assert contract.validate(ref) == 2
+    ref["pelvis_linvel"][:] = ref["qvel"][:, :3]
+    with pytest.raises(ValueError, match="pelvis_linvel"):
+        contract.validate(ref)
+
+
+@pytest.mark.parametrize("meta", [[], None, {"dt": .01}, {"dt": True},
+                                  {"num_intervals": 3}, {"duration": .1},
+                                  {"objective_version": 99}, {"objective_version": True},
+                                  {"torque_includes_mujoco_damping": False},
+                                  {"wrench_frame": "local"}, {"depth": float("nan")}])
+def test_rejects_invalid_metadata_without_writing(tmp_path, meta):
+    path = tmp_path / "bad.npz"
+    with pytest.raises(ValueError, match="meta"):
+        contract.save(path, make_ref(2), meta)
+    assert not path.exists()
+    np.savez(path, meta=np.array(json.dumps(meta)), **make_ref(2))
+    with pytest.raises(ValueError, match="meta"):
+        contract.load(path)
+
+
+def test_metadata_checks_rounded_squat_duration():
+    from dataclasses import asdict
+    from o2s.trajopt.profile import SquatParams
+    params = SquatParams(depth=.15, t_down=.813)
+    meta = asdict(params)
+    contract.validate_meta(meta, params.num_nodes())
+    with pytest.raises(ValueError, match="duration"):
+        contract.validate_meta(meta, params.num_nodes() + 1)

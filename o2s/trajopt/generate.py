@@ -18,17 +18,18 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 
 from o2s.models import g1
+from o2s.provenance import capture, write_manifest
 from o2s.reference import contract, validate
 from o2s.trajopt import export
 from o2s.trajopt import filter as flt
 from o2s.trajopt.profile import SquatParams
-from o2s.trajopt.squat_problem import solve_squat
+from o2s.trajopt.squat_problem import SquatWeights, solve_squat
 
 
 @dataclass
@@ -69,11 +70,14 @@ def main() -> int:
     ap.add_argument("--max-attempts", type=int, default=300)
     args = ap.parse_args()
 
+    if args.n < 0 or args.max_attempts < 0 or args.seed < 0:
+        ap.error("--n, --max-attempts and --seed must be nonnegative")
     if args.out.exists() and (not args.out.is_dir() or any(args.out.iterdir())):
         ap.error(f"output must be a new or empty directory: {args.out}; choose a different --out")
     args.out.mkdir(parents=True, exist_ok=True)
 
     cfg = g1.load_config()
+    provenance = capture(cfg)
     mj_model = g1.load_mj_model(cfg)
     pin_model = g1.load_pin_model(cfg)
     rng = np.random.default_rng(args.seed)
@@ -113,7 +117,7 @@ def main() -> int:
                 print(f"[{attempts:3d}] reject depth={params.depth:.3f}: replay torque limit exceeded")
                 continue
             name = f"squat_{len(accepted):04d}"
-            meta = export.solution_meta(sol, res, cfg)
+            meta = export.solution_meta(sol, res, cfg, provenance=provenance)
             meta["replay_ff"] = {"ok": replay.ok, **replay.metrics}
             contract.save(args.out / f"{name}.npz", ref, meta)
             accepted.append(name)
@@ -134,6 +138,12 @@ def main() -> int:
         "replay_ff_fall_count": sum(replay_falls),
     }
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    write_manifest(args.out, provenance,
+                   {"seed": args.seed, "split_seed": args.seed + 1, "requested": args.n,
+                    "max_attempts": args.max_attempts, "ranges": asdict(ranges),
+                    "weights": asdict(SquatWeights()), "dt": contract.DT,
+                    "max_iter": 300, "split_fractions": [0.7, 0.1, 0.2]},
+                   split, complete=len(accepted) == args.n)
     print(json.dumps(summary, indent=2))
     return 0 if len(accepted) == args.n else 1
 

@@ -63,9 +63,10 @@ sudo apt install -y git
 
 git clone https://github.com/Oszkar/opt2skill-experiments.git
 cd opt2skill-experiments
-uv venv .venv --python 3.12
+uv venv .venv --python 3.12.14
 source .venv/bin/activate
-uv pip install -e ".[trajopt,dev]"
+uv pip sync --require-hashes requirements/trajectory.lock
+uv pip install --no-deps -e .
 bash scripts/fetch_assets.sh
 ```
 
@@ -77,7 +78,9 @@ The asset script fetches pinned revisions of Unitree ROS, MuJoCo Menagerie, and
 MuJoCo Playground into `~/o2s_third_party`. To use another location, set
 `O2S_THIRD_PARTY` before fetching **and** whenever running the tools. Keep the
 Crocoddyl and Pinocchio versions pinned in `pyproject.toml`: incompatible binary
-versions can crash the solver. Third-party robot assets retain their own licenses.
+versions can crash the solver. The dependency lock targets Linux x86_64; see
+[reproducibility instructions](docs/REPRODUCIBILITY.md) for updates and provenance.
+Third-party robot assets retain their own licenses.
 
 ## Quick start
 
@@ -143,8 +146,11 @@ record their actual settings; see [reproducibility notes](docs/TRACKING_ENV.md#r
 python -m o2s.trajopt.generate --n 100 --out data/refs/squats_01 --seed 0
 ```
 
-Outputs include reference `.npz` files, `split.json`, `summary.json`, and
-`rejected.jsonl`. Generated data is ignored by Git and is not included in a clone.
+Outputs include reference `.npz` files, `split.json`, `summary.json`,
+`rejected.jsonl`, and a `manifest.json` with source/config/package/asset provenance
+and file hashes. Verify a completed dataset with
+`python -m o2s.provenance data/refs/squats_01` before using its recorded split.
+Generated data is ignored by Git and is not included in a clone.
 Choose a **new or empty output directory**: the generator rejects any nonempty
 directory before loading models or writing files. It does not resume existing runs.
 
@@ -159,14 +165,15 @@ do not reject a trajectory; inspect those results before training.
 python -m pytest -q
 ```
 
-Install both `trajopt` and `dev` extras and fetch the assets before running the
-full suite. Asset-dependent tests skip when assets are missing, but test
+Use the locked installation above (it includes `trajopt` and `dev` dependencies)
+and fetch the assets before running the full suite. Asset-dependent tests skip when assets are missing, but test
 collection still imports the simulation packages.
 
 Validation measures agreement between two models and tracking under a specific
 controller, including total drive torque at every simulated physics substep. It
 does not establish hardware readiness. Loading rejects empty trajectories, invalid
-20 ms time grids, and invalid or inconsistent base quaternions. Rotated-foot
+20 ms time grids, inconsistent duplicate base states, and conflicting metadata.
+Squat parameters are validated before solving. Rotated-foot
 wrench conventions remain unverified. See [next steps](docs/NEXT_STEPS.md)
 and the [reference conventions](docs/TRAJECTORY_GUIDE.md#reference-conventions-and-limitations).
 
@@ -176,6 +183,7 @@ and the [reference conventions](docs/TRAJECTORY_GUIDE.md#reference-conventions-a
 - [Visual guide](docs/TRAJECTORY_DIAGRAMS.md): optimization, export, and simulation diagrams.
 - [Tracking environment](docs/TRACKING_ENV.md): reset/step interface and diagnostics.
 - [Next steps](docs/NEXT_STEPS.md): reliability improvements and proposed policy training.
+- [Reproducibility](docs/REPRODUCIBILITY.md): locked installation and dataset manifests.
 - [Knowledge base](KNOWLEDGEBASE.md): research notes, historical measurements, and environment gotchas.
 - [Study booklet](<Opt2Skill Study Booklet.html>) and [saved paper](Opt2Skill_paper.htm):
   download or open the local HTML files in a browser; GitHub's file view is not an HTML viewer.

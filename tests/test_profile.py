@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from o2s.trajopt.profile import SquatParams, com_reference, min_jerk, time_grid
 
@@ -36,3 +37,26 @@ def test_com_reference_shape_depth_and_return():
     assert at_bottom >= int(round(p.t_hold / p.dt))
     # the profile never has a step larger than a physically plausible per-node change
     assert np.max(np.abs(np.diff(ref[:, 2]))) < 0.02
+
+
+@pytest.mark.parametrize("key,value", [("depth", -.1), ("depth", float("nan")),
+                                      ("com_shift_x", float("inf")), ("depth", True),
+                                      ("t_down", 0), ("t_down", -1), ("t_up", 0),
+                                      ("t_hold", -.1), ("t_stand0", -.1), ("t_stand1", -.1),
+                                      ("dt", 0), ("dt", .01)])
+def test_rejects_invalid_parameters(key, value):
+    with pytest.raises(ValueError, match=key):
+        SquatParams(**{"depth": .2, key: value})
+
+
+def test_standing_and_zero_optional_phases_are_supported():
+    params = SquatParams(depth=0, t_stand0=0, t_hold=0, t_stand1=0)
+    np.testing.assert_allclose(com_reference(params, [0, 0, .7]),
+                               np.tile([0, 0, .7], (params.num_nodes() + 1, 1)))
+
+
+def test_duration_rounding_and_too_short_profile():
+    params = SquatParams(depth=.1, t_down=.813)
+    assert abs(time_grid(params)[-1] - params.total_time) <= params.dt / 2
+    with pytest.raises(ValueError, match="duration"):
+        SquatParams(depth=.1, t_down=.001, t_up=.001, t_hold=0, t_stand0=0, t_stand1=0)

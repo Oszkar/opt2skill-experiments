@@ -53,9 +53,12 @@ def solution_to_reference(sol, pin_model: pin.Model, mj_model, cfg: dict) -> dic
     return ref
 
 
-def solution_meta(sol, filter_result, cfg: dict) -> dict:
+def solution_meta(sol, filter_result, cfg: dict, *, provenance: dict | None = None) -> dict:
+    from o2s.provenance import capture
     p = sol.params
     return {
+        "provenance": capture(cfg) if provenance is None else provenance,
+        "num_intervals": len(sol.us), "duration": len(sol.us) * sol.dt,
         "objective_version": 2,
         "simulation": sol.simulation,
         "weights": asdict(sol.weights),
@@ -65,5 +68,5 @@ def solution_meta(sol, filter_result, cfg: dict) -> dict:
         "filter": {"ok": filter_result.ok, "failures": filter_result.failures, "details": filter_result.details},
         "assets": {k: v["commit"] for k, v in cfg["assets"].items() if isinstance(v, dict)},
         "torque_includes_mujoco_damping": True,
-        "wrench_frame": "world-aligned axes at sole frame origin",
+        "wrench_frame": contract.WRENCH_FRAME,
     }
